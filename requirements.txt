@@ -77,7 +77,7 @@ jaraco.context==6.0.1
 jaraco.functools==4.3.0
 jellyfish==0.8.9
 Jinja2==3.1.4
-joblib==1.4.2
+joblib==1.5.2
 keras==3.5.0
 keyring==25.2.0
 kiwisolver==1.4.5
