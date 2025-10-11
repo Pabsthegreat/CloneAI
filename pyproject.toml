@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clai"                    # package name (local)
+version = "0.0.1"
+description = "Personal CLI agent"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["typer==0.12.5"]
+
+[project.scripts]
+clai = "agent.cli:app"           # exposes the `clai` command

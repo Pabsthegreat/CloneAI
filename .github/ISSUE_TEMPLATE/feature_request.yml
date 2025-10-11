@@ -1,0 +1,20 @@
+name: Feature request
+description: Propose a new capability
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem does this solve?
+      placeholder: e.g., I need a scheduled rule to...
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe the solution (APIs, CLI flags, tests)
+  - type: textarea
+    id: risks
+    attributes:
+      label: Security & risks
+      description: Permissions, secrets, logging considerations

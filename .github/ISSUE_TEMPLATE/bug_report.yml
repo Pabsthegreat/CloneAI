@@ -1,0 +1,24 @@
+name: Bug report
+description: File a bug
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug and expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Provide minimal steps
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / artifacts
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit

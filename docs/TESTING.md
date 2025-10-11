@@ -1,0 +1,3 @@
+# Testing & Quality Assurance Plan
+
+Full TESTING.md content here...

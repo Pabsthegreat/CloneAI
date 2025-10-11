@@ -1,2 +1,3 @@
-# CloneAI
-My personal Assistant
+# Personal Agent
+
+A local, permissioned personal copilot... (full README.md content)
