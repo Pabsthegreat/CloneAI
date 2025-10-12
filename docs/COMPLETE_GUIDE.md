@@ -148,50 +148,57 @@ You should see `System: <YourSystem>` followed by a list of available commands. 
 
 ---
 
-## Shell Auto-Load Setup
+## Shell Setup - Make `clai` Available Everywhere
 
-Make CloneAI available **automatically** every time you open your terminal.
+Make CloneAI available **from any directory** without manually activating venv!
 
 ### Windows (PowerShell)
 
-**Step 1: Add to PowerShell Profile**
-
-Run this command (replace `<YourUsername>` with your actual username):
+**Run the setup script:**
 
 ```powershell
-Add-Content $PROFILE "`n# CloneAI Auto-Load`n. 'C:\Users\<YourUsername>\OneDrive\Documents\CloneAI\setup-clai.ps1'"
-```
-
-**Step 2: Reload Profile**
-
-```powershell
-. $PROFILE
+.\setup-clai.ps1
 ```
 
 You should see:
 ```
-System: Windows (x86_64)
-✅ CloneAI commands loaded!
-   Use: clai hi
-   Use: clai chat 'your message'
-   Use: clai-cd (to navigate to CloneAI directory)
+🚀 Setting up CloneAI...
+
+1️⃣  Creating wrapper script...
+   ✓ Created: C:\Users\...\CloneAI\clai.ps1
+
+2️⃣  Adding to system PATH...
+   ✓ Added CloneAI to PATH
+
+3️⃣  Checking virtual environment...
+   ✓ Virtual environment found
+   ℹ️  Document utilities will auto-activate venv
+
+✅ CloneAI setup complete!
 ```
 
-**Step 3: Verify Auto-Load**
+**Restart your terminal** or run:
+```powershell
+$env:Path = [System.Environment]::GetEnvironmentVariable('Path','User') + ';' + [System.Environment]::GetEnvironmentVariable('Path','Machine')
+```
 
-1. **Close PowerShell completely**
-2. **Open a new PowerShell window**
-3. Type: `clai --help`
+**Test it:**
+```powershell
+cd ~  # Go to any directory
+clai hi
+```
+
+✨ **The venv activates automatically!** No need to manually activate before using document utilities.
 
 ### macOS/Linux (Bash/Zsh)
 
-**Step 1: Make setup script executable**
+**Make setup script executable:**
 
 ```bash
 chmod +x ~/Documents/CloneAI/setup-clai.sh
 ```
 
-**Step 2: Add to shell profile**
+**Add to shell profile:**
 
 For **Bash** (most Linux, older macOS):
 ```bash
@@ -214,10 +221,13 @@ System: macOS Silicon  (or Linux (x86_64))
    Use: clai-cd (to navigate to CloneAI directory)
 ```
 
-**Step 3: Verify Auto-Load**
+**Test it:**
+```bash
+cd ~  # Go to any directory
+clai hi
+```
 
-1. **Close terminal completely**
-2. **Open a new terminal window**
+✨ **The venv activates automatically!** No need to manually activate before using document utilities.
 3. Type: `clai --help`
 
 If you see the help menu, **auto-load is working!** ✅ You'll never need to manually load CloneAI again.
@@ -641,6 +651,209 @@ clai do "calendar:list next 20"
    Location: Conference Room A
 ================================================================================
 ```
+
+---
+
+## Document Utilities
+
+CloneAI provides powerful document management tools for merging and converting files.
+
+> 📌 NOTE: Document utility dependencies (PyPDF2, python-pptx, pdf2docx, comtypes) must be installed **inside your active virtual environment**.
+>
+> After activating the venv, if you see errors like `ModuleNotFoundError: No module named 'pptx'`, run:
+> ```powershell
+> # Windows PowerShell
+> .\.venv\Scripts\Activate.ps1
+> pip install PyPDF2 python-pptx pdf2docx comtypes
+> ```
+> ```bash
+> # macOS / Linux
+> source .venv/bin/activate
+> pip install PyPDF2 python-pptx pdf2docx
+> # (comtypes is Windows only)
+> ```
+>
+> You can confirm you're in the venv if `python -c "import sys; print(sys.prefix)"` points to your `.venv` folder.
+
+### Merge PDF Files
+
+Combine multiple PDF files into one document:
+
+```powershell
+clai merge pdf
+```
+
+**Interactive prompts:**
+1. **Directory path:** Enter the folder containing your PDF files
+2. **File selection:** Choose one of three methods:
+   - **Manual list:** Specify exact files to merge (e.g., 1,3,5)
+   - **Range:** Select start and end files (all files between them will be included)
+   - **All files:** Merge all PDFs in the directory
+3. **Sort order:** 
+   - Chronological (oldest to newest)
+   - Reverse chronological (newest to oldest)
+4. **Output filename:** Name for the merged PDF (without extension)
+
+**Example session:**
+```
+System: Windows (x86_64)
+
+📄 Merging PDF files
+
+Enter directory path containing files: C:\Users\user\Documents\Reports
+
+Found 5 PDF file(s):
+
+1. Report_Jan.pdf (2025-01-15 10:30:00)
+2. Report_Feb.pdf (2025-02-15 10:30:00)
+3. Report_Mar.pdf (2025-03-15 10:30:00)
+4. Report_Apr.pdf (2025-04-15 10:30:00)
+5. Report_May.pdf (2025-05-15 10:30:00)
+
+Select merge method:
+1. Manual list (specify file numbers)
+2. Range (start and end files)
+3. All files in directory
+
+Choose method [1/2/3]: 2
+
+Enter start file number: 1
+Enter end file number: 3
+
+Sort order:
+1. Chronological (oldest to newest)
+2. Reverse chronological (newest to oldest)
+Choose order [1/2]: 1
+
+Enter output filename (without extension): Q1_Report
+
+🔄 Merging PDF files...
+
+✅ Successfully merged PDF!
+Output: C:\Users\user\Documents\Reports\Q1_Report.pdf
+```
+
+### Merge PowerPoint Files
+
+Combine multiple PowerPoint presentations:
+
+```powershell
+clai merge ppt
+```
+
+**How it works:**
+- Same interactive flow as PDF merge
+- Copies all slides from selected presentations
+- Maintains slide formatting and layout
+- Supports both .ppt and .pptx files
+- Output is always .pptx format
+
+**Example:**
+```powershell
+clai merge ppt
+# Follow prompts to select directory, files, order, and output name
+```
+
+### Convert PDF to Word (DOCX)
+
+Extract text and formatting from PDF to editable Word document:
+
+```powershell
+clai convert pdf-to-docx
+```
+
+**Interactive prompts:**
+1. **Input file:** Path to the PDF file
+2. **Output file:** Path for the DOCX file (auto-suggested)
+
+**Example:**
+```
+System: Windows (x86_64)
+
+🔄 Converting: pdf-to-docx
+
+Enter input file path: C:\Users\user\Documents\Report.pdf
+Enter output file path [C:\Users\user\Documents\Report.docx]: 
+
+🔄 Converting...
+
+✅ Conversion successful!
+Output: C:\Users\user\Documents\Report.docx
+```
+
+**Works on all platforms:** Windows, macOS, Linux
+
+### Convert Word to PDF (Windows Only)
+
+Convert Word documents to PDF format:
+
+```powershell
+clai convert docx-to-pdf
+```
+
+**Requirements:**
+- Windows operating system
+- Microsoft Word installed
+
+**Example:**
+```
+Enter input file path: C:\Users\user\Documents\Report.docx
+Enter output file path [C:\Users\user\Documents\Report.pdf]: 
+
+🔄 Converting...
+
+✅ Conversion successful!
+Output: C:\Users\user\Documents\Report.pdf
+```
+
+### Convert PowerPoint to PDF (Windows Only)
+
+Convert presentations to PDF format:
+
+```powershell
+clai convert ppt-to-pdf
+```
+
+**Requirements:**
+- Windows operating system
+- Microsoft PowerPoint installed
+
+**Example:**
+```
+Enter input file path: C:\Users\user\Documents\Presentation.pptx
+Enter output file path [C:\Users\user\Documents\Presentation.pdf]: 
+
+🔄 Converting...
+
+✅ Conversion successful!
+Output: C:\Users\user\Documents\Presentation.pdf
+```
+
+**Supported formats:**
+- Input: .ppt, .pptx
+- Output: .pdf
+
+### Document Utility Tips
+
+**Best Practices:**
+1. **Backup originals** before merging (originals are not modified)
+2. **Use descriptive names** for merged files
+3. **Check file order** in the file list before selecting range
+4. **Test conversions** on a single file first
+5. **Close Microsoft Office apps** before converting (Windows)
+
+**File Selection Strategies:**
+- **Manual list:** Best when you want specific files in a custom order
+- **Range:** Perfect for sequential files (e.g., monthly reports)
+- **All files:** Quick merge of entire directory
+
+**Common Use Cases:**
+- 📊 Merge monthly reports into quarterly summaries
+- 📈 Combine presentation slides from multiple speakers
+- 📄 Convert PDFs to editable Word documents
+- 📤 Create PDF versions of presentations for sharing
+
+---
 
 ### History Commands
 
@@ -1071,6 +1284,13 @@ Print this section for easy reference:
 ║   clai do "calendar:create title:Meeting start:2025-10-15T14:00 ║
 ║            :00 duration:60"                                      ║
 ║   clai do "calendar:list next 5"     Next 5 events               ║
+║                                                                  ║
+║ DOCUMENT UTILITIES                                               ║
+║   clai merge pdf              Merge multiple PDFs                ║
+║   clai merge ppt              Merge multiple PowerPoints         ║
+║   clai convert pdf-to-docx    Convert PDF to Word                ║
+║   clai convert docx-to-pdf    Convert Word to PDF (Windows)      ║
+║   clai convert ppt-to-pdf     Convert PPT to PDF (Windows)       ║
 ║                                                                  ║
 ║ HISTORY                                                          ║
 ║   clai history                View all                           ║

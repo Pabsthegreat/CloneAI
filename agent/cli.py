@@ -1,4 +1,5 @@
 import re
+import os
 import typer
 from typing import Optional
 from agent.state import log_command, get_history, search_history, format_history_list, get_logger
@@ -595,6 +596,233 @@ def reauth(
         command_type="reauth",
         metadata={"service": service_name, "tokens_deleted": deleted_count}
     )
+
+@app.command()
+def merge(
+    doc_type: str = typer.Argument(..., help="Document type: 'pdf' or 'ppt'")
+):
+    """
+    Merge multiple PDF or PowerPoint files into one.
+    
+    Interactive command that asks for:
+    - Directory containing files
+    - File selection method (manual list, range, or all)
+    - Output filename
+    - Sort order (chronological or reverse)
+    
+    Examples:
+        clai merge pdf
+        clai merge ppt
+    """
+    from agent.tools.documents import list_documents_in_directory, merge_pdf_files, merge_ppt_files
+    
+    doc_type = doc_type.lower()
+    if doc_type not in ['pdf', 'ppt']:
+        typer.secho(f"❌ Invalid document type: {doc_type}", fg=typer.colors.RED)
+        typer.echo("Valid options: pdf, ppt")
+        return
+    
+    typer.echo("")
+    typer.secho(f"📄 Merging {doc_type.upper()} files", fg=typer.colors.CYAN, bold=True)
+    typer.echo("")
+    
+    # Get directory
+    directory = typer.prompt("Enter directory path containing files")
+    
+    if not os.path.exists(directory):
+        typer.secho(f"❌ Directory not found: {directory}", fg=typer.colors.RED)
+        return
+    
+    # List available files
+    try:
+        files = list_documents_in_directory(directory, doc_type)
+        if not files:
+            typer.secho(f"❌ No {doc_type.upper()} files found in directory", fg=typer.colors.RED)
+            return
+        
+        typer.echo("")
+        typer.secho(f"Found {len(files)} {doc_type.upper()} file(s):", fg=typer.colors.GREEN)
+        typer.echo("")
+        
+        # Sort by modification time for display
+        files.sort(key=lambda x: x[1])
+        for idx, (filename, mod_time) in enumerate(files, 1):
+            typer.echo(f"{idx}. {filename} ({mod_time.strftime('%Y-%m-%d %H:%M:%S')})")
+        
+        typer.echo("")
+        
+    except Exception as e:
+        typer.secho(f"❌ Error listing files: {str(e)}", fg=typer.colors.RED)
+        return
+    
+    # Get merge method
+    typer.echo("Select merge method:")
+    typer.echo("1. Manual list (specify file numbers)")
+    typer.echo("2. Range (start and end files)")
+    typer.echo("3. All files in directory")
+    typer.echo("")
+    
+    method = typer.prompt("Choose method [1/2/3]", type=int)
+    
+    file_list = None
+    start_file = None
+    end_file = None
+    
+    if method == 1:
+        # Manual list
+        typer.echo("")
+        typer.echo("Enter file numbers to merge (comma-separated, e.g., 1,3,5):")
+        indices = typer.prompt("File numbers")
+        try:
+            indices = [int(i.strip()) - 1 for i in indices.split(',')]
+            file_list = [files[i][0] for i in indices if 0 <= i < len(files)]
+            if not file_list:
+                typer.secho("❌ Invalid file numbers", fg=typer.colors.RED)
+                return
+        except (ValueError, IndexError):
+            typer.secho("❌ Invalid input", fg=typer.colors.RED)
+            return
+    
+    elif method == 2:
+        # Range
+        typer.echo("")
+        start_idx = typer.prompt("Enter start file number", type=int) - 1
+        end_idx = typer.prompt("Enter end file number", type=int) - 1
+        
+        if 0 <= start_idx < len(files) and 0 <= end_idx < len(files):
+            start_file = files[start_idx][0]
+            end_file = files[end_idx][0]
+        else:
+            typer.secho("❌ Invalid file numbers", fg=typer.colors.RED)
+            return
+    
+    elif method == 3:
+        # All files
+        pass
+    else:
+        typer.secho("❌ Invalid method", fg=typer.colors.RED)
+        return
+    
+    # Get sort order
+    typer.echo("")
+    typer.echo("Sort order:")
+    typer.echo("1. Chronological (oldest to newest)")
+    typer.echo("2. Reverse chronological (newest to oldest)")
+    order_choice = typer.prompt("Choose order [1/2]", type=int)
+    order = 'asc' if order_choice == 1 else 'desc'
+    
+    # Get output filename
+    typer.echo("")
+    output_filename = typer.prompt(f"Enter output filename (without extension)")
+    output_path = os.path.join(directory, f"{output_filename}.{doc_type}x" if doc_type == 'ppt' else f"{output_filename}.{doc_type}")
+    
+    # Perform merge
+    typer.echo("")
+    typer.secho(f"🔄 Merging {doc_type.upper()} files...", fg=typer.colors.YELLOW)
+    
+    try:
+        if doc_type == 'pdf':
+            result = merge_pdf_files(directory, output_path, file_list, start_file, end_file, order)
+        else:
+            result = merge_ppt_files(directory, output_path, file_list, start_file, end_file, order)
+        
+        typer.echo("")
+        typer.secho(f"✅ Successfully merged {doc_type.upper()}!", fg=typer.colors.GREEN)
+        typer.echo(f"Output: {result}")
+        
+        # Log command
+        log_command(
+            command=f"merge {doc_type}",
+            output=f"Merged to {result}",
+            command_type="merge",
+            metadata={"doc_type": doc_type, "output": result}
+        )
+    
+    except Exception as e:
+        typer.echo("")
+        typer.secho(f"❌ Error merging files: {str(e)}", fg=typer.colors.RED)
+
+@app.command()
+def convert(
+    conversion: str = typer.Argument(..., help="Conversion type: 'pdf-to-docx', 'docx-to-pdf', or 'ppt-to-pdf'")
+):
+    """
+    Convert documents between formats.
+    
+    Supported conversions:
+    - pdf-to-docx: Convert PDF to Word document
+    - docx-to-pdf: Convert Word document to PDF (Windows only)
+    - ppt-to-pdf: Convert PowerPoint to PDF (Windows only)
+    
+    Examples:
+        clai convert pdf-to-docx
+        clai convert docx-to-pdf
+        clai convert ppt-to-pdf
+    """
+    from agent.tools.documents import convert_pdf_to_docx, convert_docx_to_pdf, convert_ppt_to_pdf
+    import sys
+    
+    conversion = conversion.lower()
+    valid_conversions = ['pdf-to-docx', 'docx-to-pdf', 'ppt-to-pdf']
+    
+    if conversion not in valid_conversions:
+        typer.secho(f"❌ Invalid conversion: {conversion}", fg=typer.colors.RED)
+        typer.echo(f"Valid options: {', '.join(valid_conversions)}")
+        return
+    
+    # Check platform for Windows-only conversions
+    if conversion in ['docx-to-pdf', 'ppt-to-pdf'] and sys.platform != 'win32':
+        typer.secho(f"❌ {conversion} conversion is only supported on Windows", fg=typer.colors.RED)
+        typer.echo("It requires Microsoft Office to be installed.")
+        return
+    
+    typer.echo("")
+    typer.secho(f"🔄 Converting: {conversion}", fg=typer.colors.CYAN, bold=True)
+    typer.echo("")
+    
+    # Get input file
+    input_file = typer.prompt("Enter input file path")
+    
+    if not os.path.exists(input_file):
+        typer.secho(f"❌ File not found: {input_file}", fg=typer.colors.RED)
+        return
+    
+    # Get output file
+    default_output = os.path.splitext(input_file)[0]
+    if conversion == 'pdf-to-docx':
+        default_output += '.docx'
+    elif conversion in ['docx-to-pdf', 'ppt-to-pdf']:
+        default_output += '.pdf'
+    
+    output_file = typer.prompt("Enter output file path", default=default_output)
+    
+    # Perform conversion
+    typer.echo("")
+    typer.secho(f"🔄 Converting...", fg=typer.colors.YELLOW)
+    
+    try:
+        if conversion == 'pdf-to-docx':
+            result = convert_pdf_to_docx(input_file, output_file)
+        elif conversion == 'docx-to-pdf':
+            result = convert_docx_to_pdf(input_file, output_file)
+        elif conversion == 'ppt-to-pdf':
+            result = convert_ppt_to_pdf(input_file, output_file)
+        
+        typer.echo("")
+        typer.secho("✅ Conversion successful!", fg=typer.colors.GREEN)
+        typer.echo(f"Output: {result}")
+        
+        # Log command
+        log_command(
+            command=f"convert {conversion}",
+            output=f"Converted to {result}",
+            command_type="convert",
+            metadata={"conversion": conversion, "input": input_file, "output": result}
+        )
+    
+    except Exception as e:
+        typer.echo("")
+        typer.secho(f"❌ Conversion error: {str(e)}", fg=typer.colors.RED)
 
 if __name__ == "__main__":
     app()

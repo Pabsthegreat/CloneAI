@@ -25,8 +25,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 pip install google-auth-oauthlib
-Add-Content $PROFILE "`n# CloneAI Auto-Load`n. 'C:\Users\<YourUsername>\OneDrive\Documents\CloneAI\setup-clai.ps1'"
-. $PROFILE
+.\setup-clai.ps1
 ```
 
 **macOS/Linux (Bash/Zsh):**
@@ -36,18 +35,24 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 pip install google-auth-oauthlib
-echo "source ~/Documents/CloneAI/setup-clai.sh" >> ~/.bashrc  # or ~/.zshrc
-source ~/.bashrc  # or ~/.zshrc
+./setup-clai.sh
 ```
 
-Then test: `clai --help`
+**After setup:**
+- **Windows:** Restart your PowerShell terminal or run: `$env:Path = [System.Environment]::GetEnvironmentVariable('Path','User') + ';' + [System.Environment]::GetEnvironmentVariable('Path','Machine')`
+- **macOS/Linux:** Restart your terminal or run: `source ~/.bashrc` (or `~/.zshrc`)
+
+Then test: `clai hi`
+
+✨ **The venv activates automatically!** No need to manually activate it before using `clai`.
 
 CloneAI will automatically detect your system and display: `System: Windows (x86_64)`, `System: macOS Silicon`, or `System: Linux (x86_64)`
 
 ## ✨ Features
 
-- 📧 **Email Management** - List, search, and create Gmail drafts
+- 📧 **Email Management** - List, search, create drafts, send emails with attachments
 - 📅 **Calendar Integration** - Create and list Google Calendar events
+- 📄 **Document Utilities** - Merge PDFs/PPTs, convert between formats (PDF↔DOCX, PPT→PDF)
 - 💬 **AI Chat** - Interactive conversations with your assistant  
 - 📝 **Command History** - Automatically tracks last 100 commands
 - 🔧 **Extensible** - Easy to add new tools and integrations
@@ -76,6 +81,13 @@ clai do "mail:draft to:user@test.com subject:Hello body:Hi there"
 # Calendar features
 clai do "calendar:create title:Meeting start:2025-10-15T14:00:00 duration:60"
 clai do "calendar:list next 5"       # Next 5 events
+
+# Document utilities
+clai merge pdf                       # Merge multiple PDFs
+clai merge ppt                       # Merge multiple PowerPoints
+clai convert pdf-to-docx             # Convert PDF to Word
+clai convert docx-to-pdf             # Convert Word to PDF (Windows)
+clai convert ppt-to-pdf              # Convert PPT to PDF (Windows)
 
 # Command history
 clai history                         # View history

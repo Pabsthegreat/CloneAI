@@ -14,12 +14,18 @@ else
     CLONEAI_PATH="$(pwd)"
 fi
 
-# Save original directory
-ORIGINAL_DIR="$(pwd)"
-
-# Change to CloneAI directory to run commands
+# Change to CloneAI directory to run commands with auto-venv activation
 clai() {
-    (cd "$CLONEAI_PATH" && python3 -m agent.cli "$@")
+    local venv_python="$CLONEAI_PATH/.venv/bin/python3"
+    
+    # Check if venv exists and use its Python directly
+    if [ -f "$venv_python" ]; then
+        # Use venv Python (has all dependencies including document utilities)
+        (cd "$CLONEAI_PATH" && "$venv_python" -m agent.cli "$@")
+    else
+        # No venv, use system Python (email/calendar features only)
+        (cd "$CLONEAI_PATH" && python3 -m agent.cli "$@")
+    fi
 }
 
 # Navigate to CloneAI directory
@@ -27,7 +33,7 @@ clai-cd() {
     cd "$CLONEAI_PATH"
 }
 
-# Print success message with system detection
+# Print success message
 echo "✅ CloneAI commands loaded!"
 echo "   Use: clai hi"
 echo "   Use: clai chat 'your message'"

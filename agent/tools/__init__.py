@@ -12,6 +12,15 @@ from .mail import (
     GmailClient
 )
 from .calendar import create_calendar_event, list_calendar_events, CalendarClient
+from .documents import (
+    merge_pdf_files,
+    merge_ppt_files,
+    convert_pdf_to_docx,
+    convert_docx_to_pdf,
+    convert_ppt_to_pdf,
+    list_documents_in_directory,
+    DocumentManager
+)
 
 __all__ = [
     'list_emails',
@@ -22,5 +31,12 @@ __all__ = [
     'GmailClient',
     'create_calendar_event',
     'list_calendar_events',
-    'CalendarClient'
+    'CalendarClient',
+    'merge_pdf_files',
+    'merge_ppt_files',
+    'convert_pdf_to_docx',
+    'convert_docx_to_pdf',
+    'convert_ppt_to_pdf',
+    'list_documents_in_directory',
+    'DocumentManager'
 ]
