@@ -1,15 +1,23 @@
 # CloneAI PowerShell Setup
 # Add this to your PowerShell profile to use 'clai' from anywhere
 
-# Get the CloneAI directory
-$CloneAIPath = "C:\Users\adars\OneDrive\Documents\CloneAI"
+# Get the CloneAI directory from script location
+$CloneAIPath = Split-Path -Parent $PSCommandPath
 
 # Create a function that calls the Python module
+# Runs in CloneAI directory to ensure proper module loading
 function clai {
-    python -m agent.cli @args
+    $originalLocation = Get-Location
+    try {
+        Set-Location $CloneAIPath
+        python -m agent.cli @args
+    }
+    finally {
+        Set-Location $originalLocation
+    }
 }
 
-# Optional: Set the working directory for the function
+# Navigate to CloneAI directory
 function clai-cd {
     Set-Location $CloneAIPath
 }

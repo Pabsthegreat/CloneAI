@@ -39,6 +39,11 @@ Default to **secure, testable, and typed** code. Follow these rules **always**:
 ## Documentation
 - Add docstrings (Google style) and update `ARCHITECTURE.md` sections if interfaces change.
 - Update `CHANGELOG.md` for user-visible changes.
+- **IMPORTANT**: Do NOT create new documentation files for each feature addition. Instead:
+  - Update existing documentation files (e.g., `COMPLETE_GUIDE.md`, `README.md`)
+  - Add new sections to existing docs rather than creating separate files
+  - Only create new doc files for entirely new subsystems or major architectural changes
+  - Keep documentation consolidated to avoid documentation sprawl and user confusion
 
 ## Examples
 - Implementing a new file tool should follow the pattern:

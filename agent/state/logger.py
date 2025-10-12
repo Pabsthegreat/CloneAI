@@ -10,6 +10,8 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from collections import deque
 
+from agent.system_info import get_history_path, ensure_config_dir
+
 
 class CommandLogger:
     """Logs commands and outputs with circular buffer (max 100 entries)."""
@@ -23,13 +25,11 @@ class CommandLogger:
             max_entries: Maximum number of entries to keep (default: 100)
         """
         self.max_entries = max_entries
-        self.log_path = log_path or os.path.join(
-            str(Path.home()), '.clai', 'command_history.json'
-        )
+        self.log_path = log_path or str(get_history_path())
         self.log_dir = os.path.dirname(self.log_path)
         
         # Ensure directory exists
-        os.makedirs(self.log_dir, exist_ok=True)
+        ensure_config_dir()
         
         # Load existing history
         self.history = self._load_history()
