@@ -6,15 +6,71 @@
 
 ## 📖 Table of Contents
 
-1. [What is CloneAI?](#what-is-cloneai)
-2. [Prerequisites](#prerequisites)
-3. [Installation](#installation)
-4. [PowerShell Auto-Load Setup](#powershell-auto-load-setup)
-5. [Gmail API Setup (Email Features)](#gmail-api-setup-email-features)
-6. [Available Commands](#available-commands)
-7. [Troubleshooting](#troubleshooting)
-8. [Command Reference](#command-reference)
-9. [Tips & Best Practices](#tips--best-practices)
+1. [⚡ Quick Start](#-quick-start) ← **Start here for fast setup!**
+2. [What is CloneAI?](#what-is-cloneai)
+3. [Prerequisites](#prerequisites)
+4. [Installation](#installation)
+5. [Shell Setup](#shell-setup---make-clai-available-everywhere)
+6. [Gmail API Setup (Email Features)](#gmail-api-setup-email-features)
+7. [Available Commands](#available-commands)
+8. [Troubleshooting](#troubleshooting)
+9. [Command Reference](#command-reference)
+10. [Tips & Best Practices](#tips--best-practices)
+
+---
+
+## ⚡ Quick Start
+
+**Get CloneAI running in 5 minutes!**
+
+### Windows (PowerShell):
+```powershell
+# 1. Navigate to CloneAI folder
+cd C:\Users\<YourUsername>\OneDrive\Documents\CloneAI
+
+# 2. Create & activate virtual environment
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# 3. Install dependencies
+pip install -r requirements.txt
+pip install google-auth-oauthlib
+
+# 4. Make 'clai' available everywhere
+.\setup-clai.ps1
+
+# 5. Restart terminal or refresh PATH
+$env:Path = [System.Environment]::GetEnvironmentVariable('Path','User') + ';' + [System.Environment]::GetEnvironmentVariable('Path','Machine')
+
+# 6. Test it!
+clai hi
+```
+
+### macOS/Linux (Bash/Zsh):
+```bash
+# 1. Navigate to CloneAI folder
+cd ~/Documents/CloneAI
+
+# 2. Create & activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 3. Install dependencies
+pip install -r requirements.txt
+pip install google-auth-oauthlib
+
+# 4. Make 'clai' available everywhere
+chmod +x setup-clai.sh
+echo "source ~/Documents/CloneAI/setup-clai.sh" >> ~/.bashrc  # or ~/.zshrc
+source ~/.bashrc  # or source ~/.zshrc
+
+# 5. Test it!
+clai hi
+```
+
+✅ **Done!** Now `clai` works from any directory, and the venv activates automatically!
+
+📚 For detailed explanations, continue reading below. For troubleshooting, jump to [Troubleshooting](#troubleshooting).
 
 ---
 
@@ -1276,6 +1332,10 @@ Print this section for easy reference:
 ║ EMAIL COMMANDS                                                   ║
 ║   clai do "mail:list"                List emails                 ║
 ║   clai do "mail:list last 10"        Last 10 emails              ║
+║   clai do "mail:view id:MSG_ID"      View full email             ║
+║   clai do "mail:download id:MSG_ID"  Download attachments        ║
+║   clai do "mail:priority"            Priority emails             ║
+║   clai do "mail:scan-meetings"       Scan for meetings           ║
 ║   clai do "mail:drafts"              List drafts                 ║
 ║   clai do "mail:send to:x@test.com subject:Hi body:Hello"       ║
 ║   clai do "mail:send draft-id:abc123" Send draft                ║
@@ -1284,6 +1344,14 @@ Print this section for easy reference:
 ║   clai do "calendar:create title:Meeting start:2025-10-15T14:00 ║
 ║            :00 duration:60"                                      ║
 ║   clai do "calendar:list next 5"     Next 5 events               ║
+║                                                                  ║
+║ SCHEDULER COMMANDS                                               ║
+║   clai do "tasks"                    List scheduled tasks        ║
+║   clai do "task:add name:X command:Y time:HH:MM"                ║
+║   clai scheduler start               Start scheduler daemon      ║
+║                                                                  ║
+║ CASCADING COMMANDS                                               ║
+║   clai do "CMD1 && CMD2 && CMD3"     Chain multiple commands    ║
 ║                                                                  ║
 ║ DOCUMENT UTILITIES                                               ║
 ║   clai merge pdf              Merge multiple PDFs                ║
@@ -1312,6 +1380,225 @@ Print this section for easy reference:
 ║   ~/.clai/command_history.json     Command log                   ║
 ╚══════════════════════════════════════════════════════════════════╝
 ```
+
+---
+
+## Advanced Email & Calendar Features
+
+### Meeting Detection & Auto-Calendar
+
+CloneAI can automatically detect meeting invitations in your emails and add them to your calendar!
+
+**Scan for meetings:**
+```bash
+# Scan last 24 hours (default)
+clai do "mail:scan-meetings"
+
+# Scan last 48 hours
+clai do "mail:scan-meetings hours:48"
+```
+
+**Add detected meeting to calendar:**
+```bash
+# Use auto-detected time
+clai do "mail:add-meeting email-id:MESSAGE_ID"
+
+# Use custom time
+clai do "mail:add-meeting email-id:MESSAGE_ID time:2025-10-15T14:00:00"
+```
+
+**Send meeting invitations:**
+```bash
+# Send with Google Meet link
+clai do "mail:invite to:user@test.com subject:Weekly Sync time:2025-10-15T14:00:00 duration:30"
+
+# With custom platform
+clai do "mail:invite to:team@company.com subject:Planning time:2025-10-16T10:00:00 duration:60 platform:zoom"
+```
+
+### Priority Email Buckets
+
+Mark specific senders or entire domains as high priority, then easily filter emails from them.
+
+**Add priority senders:**
+```bash
+# Add specific email
+clai do "mail:priority-add boss@company.com"
+
+# Add entire domain
+clai do "mail:priority-add @important-client.com"
+```
+
+**View priority emails:**
+```bash
+# List last 10 priority emails
+clai do "mail:priority"
+
+# List last 20
+clai do "mail:priority last 20"
+```
+
+**Manage priority list:**
+```bash
+# View all priority senders
+clai do "mail:priority-list"
+
+# Remove priority sender
+clai do "mail:priority-remove boss@company.com"
+```
+
+### View Full Emails & Download Attachments
+
+**View complete email:**
+```bash
+clai do "mail:view id:MESSAGE_ID"
+```
+
+**Download attachments:**
+```bash
+# Download to default location (Downloads/CloneAI_Attachments)
+clai do "mail:download id:MESSAGE_ID"
+
+# Download to custom directory
+clai do "mail:download id:MESSAGE_ID dir:C:\MyAttachments"
+```
+
+### Scheduled Tasks
+
+Run commands automatically at specific times every day!
+
+**Add scheduled task:**
+```bash
+# Check emails every day at 9 AM
+clai do "task:add name:Morning Email Check command:mail:list time:09:00"
+
+# Scan for meetings at noon
+clai do "task:add name:Meeting Scan command:mail:scan-meetings time:12:00"
+
+# Check priority emails at 2:30 PM
+clai do "task:add name:Priority Check command:mail:priority time:14:30"
+```
+
+**Manage tasks:**
+```bash
+# List all scheduled tasks
+clai do "tasks"
+
+# Remove task by ID
+clai do "task:remove 1"
+
+# Enable/disable task
+clai do "task:toggle 1"
+```
+
+**Start the scheduler:**
+```bash
+# Start scheduler daemon (runs continuously)
+clai scheduler start
+
+# Check scheduler status
+clai scheduler status
+```
+
+**Note:** Press Ctrl+C to stop the scheduler. The scheduler executes tasks at their scheduled times daily.
+
+### Cascading Commands
+
+Chain multiple commands together using `&&`:
+
+```bash
+# Morning routine
+clai do "mail:priority last 20 && mail:scan-meetings && calendar:list next 10"
+
+# Quick status check
+clai do "tasks && mail:priority-list"
+
+# Complex workflow
+clai do "mail:list last 5 && mail:view id:MSG_ID && calendar:list"
+```
+
+Each command executes in order, and results are displayed separately.
+
+### Complete Command Reference - Advanced Features
+
+**Email - Advanced:**
+```bash
+clai do "mail:view id:MESSAGE_ID"                    # View full email
+clai do "mail:download id:MESSAGE_ID"                # Download attachments
+clai do "mail:scan-meetings"                         # Scan for meetings
+clai do "mail:scan-meetings hours:48"                # Scan last 48 hours
+clai do "mail:add-meeting email-id:MSG_ID"           # Add to calendar
+clai do "mail:invite to:EMAIL subject:TEXT time:DATETIME duration:MINS"
+```
+
+**Email - Priority Management:**
+```bash
+clai do "mail:priority"                              # List priority emails
+clai do "mail:priority last 20"                      # List last 20
+clai do "mail:priority-add email@domain.com"         # Add priority sender
+clai do "mail:priority-add @company.com"             # Add priority domain
+clai do "mail:priority-remove email@domain.com"      # Remove
+clai do "mail:priority-list"                         # Show all priority config
+```
+
+**Scheduler:**
+```bash
+clai do "tasks"                                      # List scheduled tasks
+clai do "task:add name:Task command:CMD time:HH:MM"  # Add task
+clai do "task:remove 1"                              # Remove task
+clai do "task:toggle 1"                              # Enable/disable task
+clai scheduler start                                 # Start scheduler daemon
+clai scheduler status                                # Check status
+```
+
+**Cascading Commands:**
+```bash
+clai do "COMMAND1 && COMMAND2 && COMMAND3"           # Chain commands
+```
+
+### Example Workflows
+
+**Daily Morning Routine:**
+```bash
+clai do "mail:priority last 20 && mail:scan-meetings && calendar:list next 10"
+```
+
+**Set Up Daily Automation:**
+```bash
+# Morning email check at 9 AM
+clai do "task:add name:Morning Check command:mail:priority time:09:00"
+
+# Scan for meetings at noon
+clai do "task:add name:Meeting Scan command:mail:scan-meetings time:12:00"
+
+# Check tomorrow's calendar at 5 PM
+clai do "task:add name:Tomorrow Schedule command:calendar:list time:17:00"
+
+# Start the scheduler
+clai scheduler start
+```
+
+**Quick Meeting Setup:**
+```bash
+# 1. Scan emails for meetings
+clai do "mail:scan-meetings"
+
+# 2. Add detected meeting to calendar
+clai do "mail:add-meeting email-id:MESSAGE_ID"
+```
+
+**Send Meeting Invitation:**
+```bash
+clai do "mail:invite to:team@company.com subject:Sprint Planning time:2025-10-15T09:00:00 duration:120"
+```
+
+### Configuration Files
+
+Advanced features store data in `~/.cloneai/` (or `%USERPROFILE%\.cloneai\` on Windows):
+
+- `priority_emails.json` - Priority sender configuration
+- `scheduler_config.json` - Scheduled tasks
+- `scheduler.log` - Scheduler execution log
 
 ---
 

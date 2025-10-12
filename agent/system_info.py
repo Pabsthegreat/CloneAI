@@ -92,6 +92,17 @@ def get_history_path() -> Path:
     return get_config_dir() / 'command_history.json'
 
 
+def get_data_path() -> Path:
+    """
+    Get the data directory for CloneAI.
+    Returns the same as config directory (~/.clai).
+    
+    Returns:
+        Path to ~/.clai directory
+    """
+    return get_config_dir()
+
+
 def ensure_config_dir() -> Path:
     """
     Ensure the config directory exists.

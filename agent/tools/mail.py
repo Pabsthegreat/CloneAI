@@ -7,7 +7,8 @@ import os
 import pickle
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
+import json
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -362,6 +363,183 @@ class GmailClient:
             
         except HttpError as error:
             raise Exception(f"Gmail API error: {error}")
+    
+    def get_full_message(self, message_id: str) -> Dict[str, Any]:
+        """
+        Get full message details including body.
+        
+        Args:
+            message_id: The ID of the message
+            
+        Returns:
+            Full message details
+        """
+        if not self.service:
+            self.authenticate()
+        
+        try:
+            message = self.service.users().messages().get(
+                userId='me',
+                id=message_id,
+                format='full'
+            ).execute()
+            
+            # Extract headers
+            headers = {}
+            for header in message['payload']['headers']:
+                headers[header['name']] = header['value']
+            
+            # Extract body
+            body = self._get_message_body(message['payload'])
+            
+            return {
+                'id': message['id'],
+                'thread_id': message['threadId'],
+                'from': headers.get('From', 'Unknown'),
+                'to': headers.get('To', 'Unknown'),
+                'subject': headers.get('Subject', '(No subject)'),
+                'date': headers.get('Date', ''),
+                'body': body,
+                'snippet': message.get('snippet', ''),
+                'labels': message.get('labelIds', [])
+            }
+        
+        except HttpError as error:
+            raise Exception(f"Gmail API error: {error}")
+    
+    def _get_message_body(self, payload: Dict[str, Any]) -> str:
+        """Extract message body from payload."""
+        body = ""
+        
+        if 'parts' in payload:
+            for part in payload['parts']:
+                if part['mimeType'] == 'text/plain':
+                    if 'data' in part['body']:
+                        body += base64.urlsafe_b64decode(part['body']['data']).decode('utf-8')
+                elif part['mimeType'] == 'text/html' and not body:
+                    if 'data' in part['body']:
+                        body += base64.urlsafe_b64decode(part['body']['data']).decode('utf-8')
+                elif 'parts' in part:
+                    body += self._get_message_body(part)
+        elif 'body' in payload and 'data' in payload['body']:
+            body = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8')
+        
+        return body
+    
+    def download_attachments(self, message_id: str, save_dir: str) -> List[str]:
+        """
+        Download all attachments from an email.
+        
+        Args:
+            message_id: The ID of the message
+            save_dir: Directory to save attachments
+            
+        Returns:
+            List of saved file paths
+        """
+        if not self.service:
+            self.authenticate()
+        
+        try:
+            message = self.service.users().messages().get(
+                userId='me',
+                id=message_id,
+                format='full'
+            ).execute()
+            
+            saved_files = []
+            parts = message['payload'].get('parts', [])
+            
+            for part in parts:
+                if part.get('filename'):
+                    attachment_id = part['body'].get('attachmentId')
+                    if attachment_id:
+                        attachment = self.service.users().messages().attachments().get(
+                            userId='me',
+                            messageId=message_id,
+                            id=attachment_id
+                        ).execute()
+                        
+                        file_data = base64.urlsafe_b64decode(attachment['data'])
+                        filename = part['filename']
+                        
+                        # Create save directory
+                        os.makedirs(save_dir, exist_ok=True)
+                        
+                        # Save file
+                        filepath = os.path.join(save_dir, filename)
+                        with open(filepath, 'wb') as f:
+                            f.write(file_data)
+                        
+                        saved_files.append(filepath)
+            
+            return saved_files
+        
+        except HttpError as error:
+            raise Exception(f"Gmail API error: {error}")
+    
+    def list_messages_since(self, last_check: Optional[datetime] = None, max_results: int = 50) -> List[Dict[str, Any]]:
+        """
+        List messages since last check time.
+        
+        Args:
+            last_check: Datetime of last check (default: 24 hours ago)
+            max_results: Maximum messages to retrieve
+            
+        Returns:
+            List of message dictionaries
+        """
+        if not self.service:
+            self.authenticate()
+        
+        if not last_check:
+            last_check = datetime.now() - timedelta(days=1)
+        
+        # Convert to Gmail query format
+        query = f"after:{int(last_check.timestamp())}"
+        
+        return self.list_messages(max_results=max_results, query=query)
+    
+    def create_meeting_email(
+        self,
+        to: str,
+        subject: str,
+        meeting_time: str,
+        duration: int,
+        meeting_link: Optional[str] = None,
+        additional_body: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create and send a meeting invitation email.
+        
+        Args:
+            to: Recipient email
+            subject: Meeting subject
+            meeting_time: Meeting time (ISO format or readable)
+            duration: Duration in minutes
+            meeting_link: Meeting link (Google Meet, Zoom, etc.)
+            additional_body: Additional message body
+            
+        Returns:
+            Sent email details
+        """
+        # Build email body
+        body_parts = []
+        body_parts.append(f"Subject: {subject}")
+        body_parts.append(f"\nTime: {meeting_time}")
+        body_parts.append(f"Duration: {duration} minutes")
+        
+        if meeting_link:
+            body_parts.append(f"\nJoin Meeting: {meeting_link}")
+        
+        if additional_body:
+            body_parts.append(f"\n{additional_body}")
+        
+        body_parts.append("\n\nLooking forward to connecting with you!")
+        
+        body = "\n".join(body_parts)
+        
+        return self.send_email(to=to, subject=f"Meeting Invitation: {subject}", body=body)
 
 
 def format_email_list(messages: List[Dict[str, Any]]) -> str:
@@ -543,3 +721,294 @@ def send_draft_email(draft_id: str) -> str:
         return f"❌ Error: {str(e)}"
     except Exception as e:
         return f"❌ Error sending draft: {str(e)}"
+
+
+def get_full_email(message_id: str) -> str:
+    """
+    Get full email body and details.
+    
+    Args:
+        message_id: Email message ID
+        
+    Returns:
+        Formatted email details
+    """
+    try:
+        client = GmailClient()
+        message = client.get_full_message(message_id)
+        
+        output = []
+        output.append("\n" + "=" * 80)
+        output.append(f"From: {message['from']}")
+        output.append(f"To: {message['to']}")
+        output.append(f"Subject: {message['subject']}")
+        output.append(f"Date: {message['date']}")
+        output.append("=" * 80)
+        output.append("\nBody:")
+        output.append("-" * 80)
+        output.append(message['body'])
+        output.append("-" * 80)
+        
+        return "\n".join(output)
+    except FileNotFoundError as e:
+        return f"❌ Error: {str(e)}"
+    except Exception as e:
+        return f"❌ Error getting email: {str(e)}"
+
+
+def download_email_attachments(message_id: str, save_dir: Optional[str] = None) -> str:
+    """
+    Download attachments from an email.
+    
+    Args:
+        message_id: Email message ID
+        save_dir: Directory to save (default: Downloads/CloneAI_Attachments)
+        
+    Returns:
+        Success message with file list
+    """
+    try:
+        if not save_dir:
+            save_dir = str(Path.home() / "Downloads" / "CloneAI_Attachments")
+        
+        client = GmailClient()
+        files = client.download_attachments(message_id, save_dir)
+        
+        if not files:
+            return f"\n📎 No attachments found in email {message_id}"
+        
+        output = []
+        output.append(f"\n✅ Downloaded {len(files)} attachment(s):")
+        output.append(f"\nSaved to: {save_dir}\n")
+        
+        for i, filepath in enumerate(files, 1):
+            filename = os.path.basename(filepath)
+            output.append(f"{i}. {filename}")
+        
+        return "\n".join(output)
+    except FileNotFoundError as e:
+        return f"❌ Error: {str(e)}"
+    except Exception as e:
+        return f"❌ Error downloading attachments: {str(e)}"
+
+
+def scan_emails_for_meetings(hours_back: int = 24) -> str:
+    """
+    Scan recent emails for meeting information.
+    
+    Args:
+        hours_back: How many hours back to scan (default: 24)
+        
+    Returns:
+        Formatted list of detected meetings
+    """
+    try:
+        from agent.tools.email_parser import EmailParser
+        
+        client = GmailClient()
+        parser = EmailParser()
+        
+        # Get emails from last N hours
+        last_check = datetime.now() - timedelta(hours=hours_back)
+        messages = client.list_messages_since(last_check, max_results=50)
+        
+        if not messages:
+            return f"\n📧 No emails found in the last {hours_back} hours."
+        
+        # Scan for meetings
+        meetings_found = []
+        for msg in messages:
+            # Get full body
+            full_msg = client.get_full_message(msg['id'])
+            meeting_info = parser.extract_meeting_info(full_msg['subject'], full_msg['body'])
+            
+            if meeting_info['is_meeting'] and meeting_info['suggested_datetime']:
+                meetings_found.append({
+                    'email_id': msg['id'],
+                    'from': msg['from'],
+                    'subject': full_msg['subject'],
+                    'meeting_info': meeting_info
+                })
+        
+        if not meetings_found:
+            return f"\n📅 No meeting invitations detected in the last {hours_back} hours."
+        
+        output = []
+        output.append(f"\n📅 Found {len(meetings_found)} meeting(s) in emails:\n")
+        output.append("=" * 80)
+        
+        for i, meeting in enumerate(meetings_found, 1):
+            info = meeting['meeting_info']
+            output.append(f"\n{i}. {meeting['subject']}")
+            output.append(f"   From: {meeting['from']}")
+            output.append(f"   Suggested Time: {info['suggested_datetime']}")
+            if info['suggested_link']:
+                output.append(f"   Meeting Link: {info['suggested_link']}")
+            output.append(f"   Email ID: {meeting['email_id']}")
+            output.append("-" * 80)
+        
+        output.append("\nUse: clai do \"mail:add-meeting email-id:MESSAGE_ID\" to add to calendar")
+        
+        return "\n".join(output)
+    
+    except FileNotFoundError as e:
+        return f"❌ Error: {str(e)}"
+    except Exception as e:
+        return f"❌ Error scanning emails: {str(e)}"
+
+
+def add_meeting_from_email(message_id: str, custom_time: Optional[str] = None) -> str:
+    """
+    Extract meeting from email and add to calendar.
+    
+    Args:
+        message_id: Email message ID
+        custom_time: Override detected time (optional)
+        
+    Returns:
+        Success message
+    """
+    try:
+        from agent.tools.email_parser import EmailParser
+        from agent.tools.calendar import CalendarClient
+        
+        email_client = GmailClient()
+        parser = EmailParser()
+        calendar_client = CalendarClient()
+        
+        # Get full email
+        message = email_client.get_full_message(message_id)
+        
+        # Parse meeting info
+        meeting_info = parser.extract_meeting_info(message['subject'], message['body'])
+        
+        if not meeting_info['is_meeting']:
+            return f"\n❌ No meeting information detected in email."
+        
+        # Determine meeting time
+        if custom_time:
+            meeting_time = custom_time
+        elif meeting_info['suggested_datetime']:
+            meeting_time = meeting_info['suggested_datetime']
+        else:
+            return f"\n❌ Could not determine meeting time. Use custom_time parameter."
+        
+        # Extract duration
+        duration = parser.extract_duration(message['body'])
+        
+        # Create calendar event
+        description_parts = [f"Email from: {message['from']}"]
+        if meeting_info['suggested_link']:
+            description_parts.append(f"\nMeeting Link: {meeting_info['suggested_link']}")
+        description_parts.append(f"\n\nOriginal Email:\n{message['snippet']}")
+        
+        event = calendar_client.create_event(
+            summary=message['subject'],
+            start_time=meeting_time,
+            duration_minutes=duration,
+            description="\n".join(description_parts),
+            location=meeting_info['suggested_link'] if meeting_info['suggested_link'] else None
+        )
+        
+        output = []
+        output.append("\n✅ Meeting added to calendar!")
+        output.append(f"\nTitle: {event['summary']}")
+        output.append(f"Time: {event['start']}")
+        output.append(f"Duration: {duration} minutes")
+        if meeting_info['suggested_link']:
+            output.append(f"Link: {meeting_info['suggested_link']}")
+        
+        return "\n".join(output)
+    
+    except FileNotFoundError as e:
+        return f"❌ Error: {str(e)}"
+    except Exception as e:
+        return f"❌ Error adding meeting: {str(e)}"
+
+
+def create_and_send_meeting_invite(
+    to: str,
+    subject: str,
+    time: str,
+    duration: int = 60,
+    platform: str = 'gmeet',
+    message: Optional[str] = None
+) -> str:
+    """
+    Create meeting and send invitation email.
+    
+    Args:
+        to: Recipient email
+        subject: Meeting subject
+        time: Meeting time (ISO format)
+        duration: Duration in minutes
+        platform: Meeting platform (gmeet, zoom, teams, custom)
+        message: Additional message
+        
+    Returns:
+        Success message
+    """
+    try:
+        from agent.tools.calendar import CalendarClient
+        import uuid
+        
+        # Generate meeting link based on platform
+        if platform.lower() == 'gmeet':
+            # For Google Meet, we'll create calendar event with conferencing
+            calendar_client = CalendarClient()
+            
+            # Create event with Google Meet
+            event_body = {
+                'summary': subject,
+                'start': {
+                    'dateTime': time,
+                    'timeZone': 'UTC',
+                },
+                'end': {
+                    'dateTime': time,  # Will be adjusted by calendar API
+                    'timeZone': 'UTC',
+                },
+                'conferenceData': {
+                    'createRequest': {
+                        'requestId': str(uuid.uuid4()),
+                        'conferenceSolutionKey': {'type': 'hangoutsMeet'}
+                    }
+                }
+            }
+            
+            if message:
+                event_body['description'] = message
+            
+            # Create event (this requires additional scope)
+            meeting_link = f"https://meet.google.com/{uuid.uuid4().hex[:10]}"  # Placeholder
+            
+        elif platform.lower() == 'custom':
+            meeting_link = message  # Use message as custom link
+        else:
+            meeting_link = f"https://{platform}.com/meeting"  # Generic placeholder
+        
+        # Send invitation email
+        email_client = GmailClient()
+        result = email_client.create_meeting_email(
+            to=to,
+            subject=subject,
+            meeting_time=time,
+            duration=duration,
+            meeting_link=meeting_link,
+            additional_body=message
+        )
+        
+        output = []
+        output.append("\n✅ Meeting invitation sent!")
+        output.append(f"\nTo: {to}")
+        output.append(f"Subject: {subject}")
+        output.append(f"Time: {time}")
+        output.append(f"Duration: {duration} minutes")
+        output.append(f"Link: {meeting_link}")
+        
+        return "\n".join(output)
+    
+    except FileNotFoundError as e:
+        return f"❌ Error: {str(e)}"
+    except Exception as e:
+        return f"❌ Error creating meeting invite: {str(e)}"

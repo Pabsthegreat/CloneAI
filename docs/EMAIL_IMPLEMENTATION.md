@@ -249,3 +249,151 @@ After setup, user can list emails with natural commands like:
 `clai do "mail:list xyz@gmail.com last 5"` 
 
 🎉 **Ready for use!**
+
+---
+
+## 🆕 Advanced Features Added
+
+### 1. **Meeting Detection & Auto-Calendar** (`agent/tools/email_parser.py`)
+- Automatically detects meeting links (Google Meet, Zoom, Teams, Webex)
+- Extracts dates and times from email body
+- Parses multiple date/time formats
+- Filters out past dates
+- Adds meetings to Google Calendar with one command
+
+**Implementation**:
+- Regex patterns for meeting link detection
+- Natural language date parsing with `dateutil`
+- Smart duration extraction from email text
+- Integration with Google Calendar API
+
+**Commands**:
+```bash
+clai do "mail:scan-meetings"                    # Scan for meetings
+clai do "mail:add-meeting email-id:MSG_ID"      # Add to calendar
+```
+
+### 2. **Priority Email Management** (`agent/tools/priority_emails.py`)
+- Mark specific email addresses as priority
+- Mark entire domains as priority (@company.com)
+- Filter emails to show only priority ones
+- Persistent configuration storage
+
+**Implementation**:
+- JSON-based configuration (`~/.cloneai/priority_emails.json`)
+- Case-insensitive matching
+- Gmail API query optimization for priority filtering
+- Domain and email address support
+
+**Commands**:
+```bash
+clai do "mail:priority-add boss@company.com"    # Add sender
+clai do "mail:priority-add @company.com"        # Add domain
+clai do "mail:priority last 10"                 # List priority emails
+```
+
+### 3. **Task Scheduler** (`agent/tools/scheduler.py`)
+- Schedule commands to run daily at specific times
+- Enable/disable tasks without deletion
+- Background daemon execution
+- Persistent task storage and execution logging
+
+**Implementation**:
+- Uses `schedule` library for task management
+- JSON-based task storage (`~/.cloneai/scheduler_config.json`)
+- Subprocess execution of scheduled commands
+- File-based execution logging (`~/.cloneai/scheduler.log`)
+
+**Commands**:
+```bash
+clai do "task:add name:Check Email command:mail:list time:09:00"
+clai do "tasks"                                 # List all tasks
+clai scheduler start                            # Start daemon
+```
+
+### 4. **Email Attachments & Full View** (`agent/tools/mail.py`)
+- Download all attachments from emails
+- View complete email body (plain text and HTML)
+- Extract nested MIME parts
+- Custom download directories
+
+**Implementation**:
+- Gmail API attachment retrieval
+- Base64 decoding of attachment data
+- Recursive MIME part parsing
+- Automatic directory creation
+
+**Commands**:
+```bash
+clai do "mail:view id:MESSAGE_ID"               # View full email
+clai do "mail:download id:MESSAGE_ID"           # Download attachments
+```
+
+### 5. **Meeting Invitations** (`agent/tools/mail.py`)
+- Create and send meeting invitations
+- Support for multiple platforms (Google Meet, Zoom, Teams)
+- Include meeting links and details
+- Professional email formatting
+
+**Implementation**:
+- Email composition with meeting details
+- Platform-specific link generation
+- Calendar event creation integration
+- Customizable duration and messages
+
+**Commands**:
+```bash
+clai do "mail:invite to:user@test.com subject:Sync time:2025-10-15T14:00:00 duration:30"
+```
+
+### 6. **Cascading Commands** (`agent/cli.py`)
+- Chain multiple commands with `&&`
+- Sequential execution with individual error handling
+- Works with all existing commands
+- Separate result display for each command
+
+**Implementation**:
+- Command string parsing on `&&` delimiter
+- Sequential execution loop
+- Individual command logging
+- Aggregate result collection
+
+**Usage**:
+```bash
+clai do "mail:priority && mail:scan-meetings && calendar:list"
+```
+
+### Technical Architecture
+
+**New Modules**:
+- `email_parser.py` - Meeting detection and parsing logic
+- `scheduler.py` - Task scheduling and execution
+- `priority_emails.py` - Priority sender management
+
+**Enhanced Modules**:
+- `mail.py` - Added methods for attachments, full view, meetings
+- `cli.py` - Expanded command parser with cascading support
+
+**Storage**:
+- `~/.cloneai/priority_emails.json` - Priority configuration
+- `~/.cloneai/scheduler_config.json` - Scheduled tasks
+- `~/.cloneai/scheduler.log` - Execution logs
+
+**Dependencies Added**:
+- `schedule==1.2.0` - Task scheduling
+
+### Error Handling
+- Graceful API error handling
+- User-friendly error messages
+- Logging for debugging
+- Validation of user inputs
+
+### Testing Recommendations
+1. Email parser pattern matching
+2. Scheduler task execution
+3. Priority email filtering
+4. Cascading command execution
+5. Attachment download
+6. Meeting detection accuracy
+
+🎉 **All features fully implemented and ready to use!**

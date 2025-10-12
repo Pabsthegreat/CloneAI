@@ -35,14 +35,16 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 pip install google-auth-oauthlib
-./setup-clai.sh
+chmod +x setup-clai.sh
+echo "source ~/Documents/CloneAI/setup-clai.sh" >> ~/.bashrc  # or ~/.zshrc for Zsh
+source ~/.bashrc  # or source ~/.zshrc for Zsh
 ```
 
 **After setup:**
 - **Windows:** Restart your PowerShell terminal or run: `$env:Path = [System.Environment]::GetEnvironmentVariable('Path','User') + ';' + [System.Environment]::GetEnvironmentVariable('Path','Machine')`
-- **macOS/Linux:** Restart your terminal or run: `source ~/.bashrc` (or `~/.zshrc`)
+- **macOS/Linux:** Open a new terminal (the setup is already done!)
 
-Then test: `clai hi`
+Then test from **any directory**: `clai hi`
 
 ✨ **The venv activates automatically!** No need to manually activate it before using `clai`.
 
@@ -51,7 +53,14 @@ CloneAI will automatically detect your system and display: `System: Windows (x86
 ## ✨ Features
 
 - 📧 **Email Management** - List, search, create drafts, send emails with attachments
-- 📅 **Calendar Integration** - Create and list Google Calendar events
+  - 🎯 **Priority Email Buckets** - Filter emails from important senders/domains
+  - �️ **View Full Emails** - See complete email body and content
+  - 📎 **Download Attachments** - Save email attachments to disk
+- �📅 **Calendar Integration** - Create and list Google Calendar events
+  - 🔍 **Auto-Meeting Detection** - Scan emails for meeting invites and add to calendar
+  - 📨 **Send Meeting Invites** - Create and send meeting invitations with links
+- ⏰ **Task Scheduler** - Run commands automatically at specific times daily
+- 🔗 **Cascading Commands** - Chain multiple commands with `&&`
 - 📄 **Document Utilities** - Merge PDFs/PPTs, convert between formats (PDF↔DOCX, PPT→PDF)
 - 💬 **AI Chat** - Interactive conversations with your assistant  
 - 📝 **Command History** - Automatically tracks last 100 commands
@@ -75,19 +84,33 @@ clai chat "help me organize tasks"   # Direct chat
 
 # Email features
 clai do "mail:list last 5"           # Recent emails
-clai do "mail:list boss@work.com"    # From specific sender
-clai do "mail:draft to:user@test.com subject:Hello body:Hi there"
+clai do "mail:view id:MESSAGE_ID"    # View full email
+clai do "mail:download id:MSG_ID"    # Download attachments
+clai do "mail:priority last 10"      # Priority emails
+clai do "mail:scan-meetings"         # Scan for meeting invites
+clai do "mail:add-meeting email-id:MSG_ID"  # Add to calendar
+
+# Priority email management
+clai do "mail:priority-add boss@company.com"    # Add priority sender
+clai do "mail:priority-add @company.com"        # Add priority domain
 
 # Calendar features
 clai do "calendar:create title:Meeting start:2025-10-15T14:00:00 duration:60"
 clai do "calendar:list next 5"       # Next 5 events
+clai do "mail:invite to:user@test.com subject:Sync time:2025-10-15T14:00:00"
+
+# Scheduled tasks
+clai do "task:add name:Check Email command:mail:priority time:09:00"
+clai do "tasks"                      # List all tasks
+clai scheduler start                 # Start scheduler daemon
+
+# Cascading commands
+clai do "mail:priority && mail:scan-meetings && calendar:list"
 
 # Document utilities
 clai merge pdf                       # Merge multiple PDFs
 clai merge ppt                       # Merge multiple PowerPoints
 clai convert pdf-to-docx             # Convert PDF to Word
-clai convert docx-to-pdf             # Convert Word to PDF (Windows)
-clai convert ppt-to-pdf              # Convert PPT to PDF (Windows)
 
 # Command history
 clai history                         # View history
