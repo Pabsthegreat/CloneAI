@@ -960,6 +960,246 @@ The `reauth` command will:
 
 ---
 
+## 🤖 Natural Language & AI-Powered Features
+
+CloneAI now supports natural language commands and AI-powered email automation using local LLMs (Ollama).
+
+### Prerequisites
+
+**Install Ollama (Local LLM):**
+
+```bash
+# macOS
+brew install ollama
+
+# Linux
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Windows
+# Download from https://ollama.com/download
+```
+
+**Pull the required model:**
+```bash
+ollama pull qwen3:4b-instruct
+```
+
+### Natural Language Command Parsing
+
+Convert natural language instructions into CloneAI commands:
+
+```bash
+# Parse natural language to commands
+clai interpret "show me my last 5 emails"
+clai interpret "list my upcoming calendar events"
+clai interpret "create a meeting tomorrow at 2pm"
+
+# Auto-execute parsed commands with --run flag
+clai interpret --run "show me emails from john@example.com"
+clai interpret -r "list my tasks"
+```
+
+**Example output:**
+```
+🔍 Interpreting: "show me my last 5 emails"
+
+✅ Parsed Command:
+   mail:list last 5
+
+📊 Confidence: 95%
+💡 Explanation: This command lists the last 5 emails from your inbox
+
+Would you like to execute this command? [y/N]: y
+
+📧 Found 5 email(s):
+...
+```
+
+### AI-Powered Email Drafting
+
+Generate professional emails using AI:
+
+```bash
+# Generate email drafts with AI
+clai draft-email "send an email to john@example.com about the meeting tomorrow"
+clai draft-email "write a thank you email to sarah@company.com for the help"
+clai draft-email "compose a professional follow-up to client@external.com"
+```
+
+**Workflow:**
+1. AI generates subject and body
+2. Shows you the complete email
+3. Choose action:
+   - **Send** - Send immediately
+   - **Draft** - Save as Gmail draft
+   - **Edit** - Modify and retry
+   - **Cancel** - Discard
+
+**Example output:**
+```
+✍️  Generating email...
+
+📧 Generated Email:
+================================================================================
+To: john@example.com
+Subject: Meeting Tomorrow - Quick Confirmation
+
+Body:
+Hi John,
+
+I wanted to reach out regarding our meeting scheduled for tomorrow. Could you 
+please confirm the time and location?
+
+Looking forward to connecting with you.
+
+Best regards
+================================================================================
+
+What would you like to do?
+[S]end / [D]raft / [E]dit / [C]ancel: s
+
+✅ Email sent successfully!
+```
+
+### Multi-Step Workflow Automation
+
+Automate complex email workflows with a single command:
+
+```bash
+# Check and reply to emails automatically
+clai auto "check my last 3 emails and reply to them professionally"
+
+# Filter by sender
+clai auto "check my last 5 emails from boss@company.com and reply to them"
+
+# General inbox
+clai auto "check my last 3 emails and reply to them"
+```
+
+**Workflow Process:**
+1. **Fetches emails** (silently, no terminal spam)
+2. **Generates AI replies** for each email in background
+3. **Shows all drafts** at once for review
+4. **Asks for approval** - Type:
+   - `all` - Send all drafts
+   - `1,3` - Send drafts 1 and 3
+   - `2` - Send only draft 2
+   - Enter - Cancel (drafts saved in Gmail)
+5. **Sends approved emails**
+
+**Example output:**
+```
+🤖 Automated Email Reply Workflow
+
+📧 Step 1: Fetching emails...
+   ✓ Found 3 email(s)
+
+✍️  Step 2: Generating professional replies...
+   [1/3] Processing: Project Update...
+      ✓ Draft created
+   [2/3] Processing: Meeting Request...
+      ✓ Draft created
+   [3/3] Processing: Question about features...
+      ✓ Draft created
+
+================================================================================
+📝 GENERATED DRAFTS - REVIEW & APPROVE
+================================================================================
+
+[Draft #1]
+To: alice@company.com
+Subject: Re: Project Update
+Original: Project Update...
+
+Body:
+Hi Alice,
+
+Thank you for the project update. I've reviewed the progress and everything 
+looks good. Let's continue with the current timeline.
+
+Best regards
+
+--------------------------------------------------------------------------------
+
+[Draft #2]
+To: bob@company.com
+Subject: Re: Meeting Request
+Original: Meeting Request...
+
+Body:
+Hi Bob,
+
+I'd be happy to meet. How about Thursday at 2 PM? Let me know if that works 
+for you.
+
+Best regards
+
+--------------------------------------------------------------------------------
+
+[Draft #3]
+To: charlie@company.com
+Subject: Re: Question about features
+Original: Question about features...
+
+Body:
+Hi Charlie,
+
+Great question! The feature you're asking about is available in the latest 
+version. Here's how to use it: [details]
+
+Let me know if you need any clarification.
+
+Best regards
+
+--------------------------------------------------------------------------------
+
+📮 Ready to send drafts!
+
+Options:
+  • Type 'all' to send all drafts
+  • Type specific numbers (e.g., '1,3' or '1 3' or '2')
+  • Press Enter to cancel
+
+Which drafts to send?: 1,3
+
+📤 Sending approved drafts...
+
+   [1/2] Sending to alice@company.com...
+      ✓ Sent!
+   [2/2] Sending to charlie@company.com...
+      ✓ Sent!
+
+✅ Workflow Complete! Sent 2/2 emails
+```
+
+**Key Features:**
+- ✅ **Silent processing** - No email spam in terminal
+- ✅ **Batch review** - See all drafts before sending
+- ✅ **Flexible approval** - Send all, some, or none
+- ✅ **Safe by default** - Unsent drafts saved in Gmail
+- ✅ **Context-aware** - AI understands email content and generates relevant replies
+
+### Tips for Natural Language Commands
+
+**Good examples:**
+- "show me my last 5 emails"
+- "list emails from john@example.com"
+- "create a meeting tomorrow at 2pm"
+- "send an email to alice@company.com about the project"
+
+**What works:**
+- ✅ Simple, clear instructions
+- ✅ Specific numbers and email addresses
+- ✅ Common actions (show, list, create, send)
+- ✅ Time expressions (tomorrow, next week, 2pm)
+
+**Limitations:**
+- ⚠️ Complex multi-condition queries may need rephrasing
+- ⚠️ Very ambiguous requests may need clarification
+- ⚠️ Requires Ollama running locally
+
+---
+
 ## Troubleshooting
 
 ### General Issues

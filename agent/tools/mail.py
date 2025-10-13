@@ -552,7 +552,8 @@ def format_email_list(messages: List[Dict[str, Any]]) -> str:
     output.append("=" * 80)
     
     for i, msg in enumerate(messages, 1):
-        output.append(f"\n{i}. From: {msg['from']}")
+        output.append(f"\n{i}. Message ID: {msg['id']}") 
+        output.append(f"   From: {msg['from']}")
         output.append(f"   Subject: {msg['subject']}")
         output.append(f"   Date: {msg['date']}")
         output.append(f"   Preview: {msg['snippet'][:100]}...")

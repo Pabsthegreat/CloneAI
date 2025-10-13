@@ -52,11 +52,16 @@ CloneAI will automatically detect your system and display: `System: Windows (x86
 
 ## ✨ Features
 
-- 📧 **Email Management** - List, search, create drafts, send emails with attachments
+- 🤖 **Natural Language Commands** - Use plain English to control CloneAI (powered by Ollama)
+  - 🗣️ **Interpret Mode** - Convert natural language to commands: `clai interpret "show my emails"`
+  - ✍️ **AI Email Drafting** - Generate professional emails: `clai draft-email "write to john@example.com"`
+  - � **Multi-Step Workflows** - Automate email replies: `clai auto "check my last 3 emails and reply"`
+- �📧 **Email Management** - List, search, create drafts, send emails with attachments
   - 🎯 **Priority Email Buckets** - Filter emails from important senders/domains
-  - �️ **View Full Emails** - See complete email body and content
+  - 👁️ **View Full Emails** - See complete email body and content
   - 📎 **Download Attachments** - Save email attachments to disk
-- �📅 **Calendar Integration** - Create and list Google Calendar events
+  - 🤖 **Batch Reply** - AI-powered professional replies to multiple emails at once
+- 📅 **Calendar Integration** - Create and list Google Calendar events
   - 🔍 **Auto-Meeting Detection** - Scan emails for meeting invites and add to calendar
   - 📨 **Send Meeting Invites** - Create and send meeting invitations with links
 - ⏰ **Task Scheduler** - Run commands automatically at specific times daily
@@ -65,7 +70,7 @@ CloneAI will automatically detect your system and display: `System: Windows (x86
 - 💬 **AI Chat** - Interactive conversations with your assistant  
 - 📝 **Command History** - Automatically tracks last 100 commands
 - 🔧 **Extensible** - Easy to add new tools and integrations
-- 🔒 **Private** - Runs locally on your machine
+- 🔒 **Private** - Runs locally on your machine (requires Ollama for AI features)
 
 ## � Documentation Files
 
@@ -77,7 +82,13 @@ CloneAI will automatically detect your system and display: `System: Windows (x86
 
 ## 🎯 Example Commands
 
-```powershell
+```bash
+# Natural Language & AI Features (requires Ollama)
+clai interpret "show me my last 5 emails"              # Parse natural language
+clai interpret --run "list emails from john@example.com"  # Auto-execute
+clai draft-email "write to sarah@company.com about the meeting"  # AI email generation
+clai auto "check my last 3 emails and reply to them"   # Automated workflow
+
 # Basic interaction
 clai hi                              # Interactive greeting
 clai chat "help me organize tasks"   # Direct chat

@@ -945,6 +945,559 @@ Supported actions:
         return error_msg + help_text
 
 @app.command()
+def interpret(
+    message: str = typer.Argument(..., help="Natural language instruction"),
+    auto_run: bool = typer.Option(False, "--run", "-r", help="Automatically execute the parsed command"),
+    model: str = typer.Option("qwen3:4b-instruct", "--model", "-m", help="Ollama model to use")
+):
+    """
+    Parse natural language into CloneAI commands using Ollama.
+    
+    This command uses a local LLM (via Ollama) to translate your natural language
+    instructions into proper CloneAI command syntax.
+    
+    Examples:
+        clai interpret "show me my last 10 emails"
+        clai interpret "list emails from john@example.com"
+        clai interpret "create a meeting tomorrow at 2pm" --run
+        clai interpret "download attachments from message abc123"
+        clai interpret "show my calendar for next week" --model qwen3:4b-instruct
+    
+    Note: Requires Ollama to be installed (https://ollama.ai)
+          And the model to be pulled: ollama pull qwen3:4b-instruct
+    """
+    typer.echo("")
+    typer.secho(f"🧠 Interpreting: {message}", fg=typer.colors.CYAN)
+    typer.echo("")
+    
+    try:
+        from agent.tools.nl_parser import parse_natural_language
+        
+        # Parse the natural language
+        typer.echo("⏳ Calling Ollama LLM...")
+        result = parse_natural_language(message, model=model)
+        
+        if not result["success"]:
+            typer.secho(f"❌ Failed to parse command: {result['explanation']}", fg=typer.colors.RED)
+            log_command(
+                command=f"interpret: {message}",
+                output=f"Failed: {result['explanation']}",
+                command_type="interpret",
+                metadata={"input": message, "success": False}
+            )
+            return
+        
+        # Display result
+        typer.echo("")
+        typer.secho("✅ Parsed command:", fg=typer.colors.GREEN)
+        typer.secho(f"   {result['command']}", fg=typer.colors.BRIGHT_CYAN, bold=True)
+        typer.echo("")
+        typer.secho(f"💡 Explanation: {result['explanation']}", fg=typer.colors.YELLOW)
+        typer.secho(f"📊 Confidence: {result['confidence']}", fg=typer.colors.BLUE)
+        typer.echo("")
+        
+        # Log the interpretation
+        log_command(
+            command=f"interpret: {message}",
+            output=f"Parsed: {result['command']}",
+            command_type="interpret",
+            metadata={
+                "input": message,
+                "parsed_command": result['command'],
+                "confidence": result['confidence'],
+                "auto_run": auto_run
+            }
+        )
+        
+        # Auto-run if requested
+        if auto_run:
+            typer.secho("🚀 Executing command...", fg=typer.colors.MAGENTA)
+            typer.echo("")
+            
+            # Execute the parsed command using the do() function
+            try:
+                do(result['command'])
+            except Exception as e:
+                typer.secho(f"❌ Error executing command: {str(e)}", fg=typer.colors.RED)
+        else:
+            typer.echo("💡 To execute this command, run:")
+            typer.secho(f'   clai do "{result["command"]}"', fg=typer.colors.BRIGHT_WHITE, bold=True)
+            typer.echo("")
+            typer.echo("   Or use --run flag to execute automatically:")
+            typer.secho(f'   clai interpret "{message}" --run', fg=typer.colors.BRIGHT_WHITE, bold=True)
+        
+    except ImportError as e:
+        typer.secho(f"❌ Error: {str(e)}", fg=typer.colors.RED)
+        typer.echo("Make sure nl_parser.py is in agent/tools/")
+    except Exception as e:
+        typer.secho(f"❌ Unexpected error: {str(e)}", fg=typer.colors.RED)
+        import traceback
+        traceback.print_exc()
+
+@app.command()
+def draft_email(
+    instruction: str = typer.Argument(..., help="Natural language instruction for the email"),
+    recipient: Optional[str] = typer.Option(None, "--to", "-t", help="Override recipient email"),
+    send: bool = typer.Option(False, "--send", "-s", help="Send immediately without confirmation"),
+    model: str = typer.Option("qwen3:4b-instruct", "--model", "-m", help="Ollama model to use")
+):
+    """
+    Draft an email using AI and send it after approval.
+    
+    This command uses a local LLM (via Ollama) to generate professional email content
+    from your natural language instruction. It shows you a preview and asks for
+    confirmation before sending.
+    
+    Examples:
+        clai draft-email "send an email to john@example.com about the project deadline"
+        clai draft-email "email sarah about tomorrow's meeting being rescheduled to 3pm"
+        clai draft-email "write to support@company.com asking about billing issue" --to support@company.com
+        clai draft-email "thank bob@test.com for the feedback" --send
+    
+    Note: Requires Ollama to be installed (https://ollama.ai)
+          And the model to be pulled: ollama pull qwen3:4b-instruct
+    """
+    typer.echo("")
+    typer.secho(f"✍️  Drafting email: {instruction}", fg=typer.colors.CYAN)
+    typer.echo("")
+    
+    try:
+        from agent.tools.nl_parser import generate_email_content
+        
+        # Generate email content
+        typer.echo("⏳ Generating email content with AI...")
+        result = generate_email_content(instruction, model=model)
+        
+        if not result["success"]:
+            typer.secho(f"❌ Failed to generate email: {result.get('error', 'Unknown error')}", fg=typer.colors.RED)
+            return
+        
+        # Override recipient if provided
+        if recipient:
+            result["to"] = recipient
+        
+        # Display the generated email
+        typer.echo("")
+        typer.secho("=" * 80, fg=typer.colors.BRIGHT_BLACK)
+        typer.secho("📧 DRAFT EMAIL", fg=typer.colors.GREEN, bold=True)
+        typer.secho("=" * 80, fg=typer.colors.BRIGHT_BLACK)
+        typer.echo("")
+        typer.secho(f"To: {result['to']}", fg=typer.colors.BLUE, bold=True)
+        typer.secho(f"Subject: {result['subject']}", fg=typer.colors.BLUE, bold=True)
+        typer.echo("")
+        typer.secho("-" * 80, fg=typer.colors.BRIGHT_BLACK)
+        typer.echo(result['body'])
+        typer.secho("-" * 80, fg=typer.colors.BRIGHT_BLACK)
+        typer.echo("")
+        
+        # Check if recipient email is valid
+        if result['to'] == "RECIPIENT_EMAIL" or "@" not in result['to']:
+            typer.secho("⚠️  Warning: No valid recipient email detected!", fg=typer.colors.YELLOW)
+            typer.echo("Please specify recipient with --to flag")
+            typer.echo("")
+            override_to = typer.prompt("Enter recipient email address")
+            result['to'] = override_to
+            typer.echo("")
+        
+        # Log the draft
+        log_command(
+            command=f"draft-email: {instruction}",
+            output=f"Generated email to {result['to']} with subject: {result['subject']}",
+            command_type="draft-email",
+            metadata={
+                "instruction": instruction,
+                "to": result['to'],
+                "subject": result['subject'],
+                "body_preview": result['body'][:100]
+            }
+        )
+        
+        # Ask for confirmation unless --send flag is used
+        if not send:
+            typer.echo("")
+            typer.secho("Options:", fg=typer.colors.CYAN, bold=True)
+            typer.echo("  [s] Send now")
+            typer.echo("  [d] Save as draft")
+            typer.echo("  [e] Edit and send")
+            typer.echo("  [c] Cancel")
+            typer.echo("")
+            
+            choice = typer.prompt("What would you like to do?", default="s").lower()
+            
+            if choice == "c":
+                typer.secho("❌ Cancelled", fg=typer.colors.RED)
+                return
+            elif choice == "e":
+                typer.echo("")
+                typer.secho("✏️  Edit mode:", fg=typer.colors.YELLOW)
+                result['subject'] = typer.prompt("Subject", default=result['subject'])
+                typer.echo("Body (press Enter twice when done):")
+                body_lines = []
+                while True:
+                    line = input()
+                    if line == "" and (not body_lines or body_lines[-1] == ""):
+                        break
+                    body_lines.append(line)
+                result['body'] = "\n".join(body_lines[:-1] if body_lines and body_lines[-1] == "" else body_lines)
+                typer.echo("")
+        
+        # Determine action: send or draft
+        action = "send" if (send or (not send and choice == "s")) else "draft"
+        
+        if action == "send":
+            # Send the email
+            typer.secho("📤 Sending email...", fg=typer.colors.MAGENTA)
+            from agent.tools.mail import send_email_now
+            
+            send_result = send_email_now(
+                to=result['to'],
+                subject=result['subject'],
+                body=result['body']
+            )
+            typer.echo("")
+            typer.echo(send_result)
+            
+        else:
+            # Save as draft
+            typer.secho("💾 Saving as draft...", fg=typer.colors.MAGENTA)
+            from agent.tools.mail import create_draft_email
+            
+            draft_result = create_draft_email(
+                to=result['to'],
+                subject=result['subject'],
+                body=result['body']
+            )
+            typer.echo("")
+            typer.echo(draft_result)
+        
+    except ImportError as e:
+        typer.secho(f"❌ Error: {str(e)}", fg=typer.colors.RED)
+        typer.echo("Make sure all required modules are available")
+    except KeyboardInterrupt:
+        typer.echo("")
+        typer.secho("❌ Cancelled by user", fg=typer.colors.RED)
+    except Exception as e:
+        typer.secho(f"❌ Unexpected error: {str(e)}", fg=typer.colors.RED)
+        import traceback
+        traceback.print_exc()
+
+@app.command()
+def auto(
+    instruction: str = typer.Argument(..., help="Natural language instruction for multi-step workflow"),
+    run: bool = typer.Option(False, "--run", "-r", help="Auto-execute workflow without approval")
+):
+    """
+    Execute multi-step workflows from natural language instructions.
+    
+    Examples:
+        clai auto "check my last 5 emails and reply to them"
+        clai auto "schedule a meeting tomorrow at 2pm and send invites to team@example.com"
+        clai auto --run "check calendar for today and email me a summary"
+    """
+    try:
+        from agent.tools.nl_parser import parse_workflow
+        
+        typer.secho(f"\n🔄 Parsing workflow: '{instruction}'", fg=typer.colors.CYAN, bold=True)
+        
+        # Parse the workflow
+        result = parse_workflow(instruction)
+        
+        if not result["success"]:
+            typer.secho(f"❌ Failed to parse workflow: {result.get('error', 'Unknown error')}", fg=typer.colors.RED)
+            return
+        
+        steps = result["steps"]
+        reasoning = result.get("reasoning", "")
+        
+        # Display workflow plan
+        typer.echo("")
+        typer.secho("📋 Workflow Plan:", fg=typer.colors.YELLOW, bold=True)
+        typer.echo(f"   {reasoning}")
+        typer.echo("")
+        
+        typer.secho(f"   {len(steps)} step(s) identified:", fg=typer.colors.BLUE)
+        for i, step in enumerate(steps, 1):
+            command = step["command"]
+            description = step["description"]
+            needs_approval = "⚠️  Needs approval" if step["needs_approval"] else "✓ Auto-execute"
+            
+            typer.echo(f"\n   Step {i}: {description}")
+            typer.echo(f"           Command: {command}")
+            typer.echo(f"           {needs_approval}")
+        
+        # Get approval unless --run flag is set
+        if not run:
+            typer.echo("")
+            confirmation = typer.confirm("Do you want to execute this workflow?")
+            if not confirmation:
+                typer.secho("❌ Workflow cancelled by user", fg=typer.colors.YELLOW)
+                return
+        
+        # Execute workflow steps
+        typer.echo("")
+        typer.secho("🚀 Executing workflow...", fg=typer.colors.GREEN, bold=True)
+        typer.echo("")
+        
+        # Check if this is a "check emails and reply" workflow
+        is_reply_workflow = any("reply" in step["description"].lower() or "draft" in step["description"].lower() 
+                                for step in steps)
+        
+        if is_reply_workflow:
+            # Handle the full email reply workflow
+            typer.secho("🤖 Automated Email Reply Workflow", fg=typer.colors.MAGENTA, bold=True)
+            typer.echo("")
+            
+            # Step 1: Fetch emails
+            typer.secho("📧 Step 1: Fetching emails...", fg=typer.colors.CYAN)
+            
+            # Parse first step to get count and sender filter
+            first_step = steps[0]
+            parts = first_step["command"].split()
+            count = 3  # default
+            sender = None
+            
+            # Look for sender email in command (after "from")
+            for i, part in enumerate(parts):
+                if part.isdigit():
+                    count = int(part)
+                elif part.lower() == "from" and i + 1 < len(parts):
+                    sender = parts[i + 1]
+            
+            from agent.tools.mail import GmailClient
+            client = GmailClient()
+            # Fetch emails - if sender specified, filter by "from:sender" (emails received FROM that address)
+            messages = client.list_messages(max_results=count, sender=sender)
+            
+            if not messages:
+                typer.secho(f"   No emails found", fg=typer.colors.YELLOW)
+                return
+            
+            typer.secho(f"   ✓ Found {len(messages)} email(s)", fg=typer.colors.GREEN)
+            typer.echo("")
+            
+            # Step 2: Generate drafts for each email
+            typer.secho("✍️  Step 2: Generating professional replies...", fg=typer.colors.CYAN)
+            drafts = []
+            
+            from agent.tools.mail import get_full_email
+            from agent.tools.nl_parser import generate_email_content
+            
+            for idx, msg in enumerate(messages, 1):
+                msg_id = msg['id']
+                subject = msg['subject']
+                sender_email = msg['from']
+                
+                # Extract just email address from "Name <email>" format
+                import re
+                email_match = re.search(r'<(.+?)>', sender_email)
+                reply_to = email_match.group(1) if email_match else sender_email
+                
+                typer.echo(f"   [{idx}/{len(messages)}] Processing: {subject[:50]}...")
+                
+                # Fetch full email content
+                full_email = get_full_email(msg_id)
+                
+                # Generate reply using LLM
+                prompt = f"Generate a professional reply to this email:\n\nOriginal Email:\n{full_email}\n\nWrite a polite and professional response."
+                
+                result = generate_email_content(prompt)
+                
+                if result["success"]:
+                    reply_subject = result["subject"]
+                    reply_body = result["body"]
+                    
+                    # Create draft
+                    draft_result = client.create_draft(
+                        to=reply_to,
+                        subject=f"Re: {subject}",
+                        body=reply_body
+                    )
+                    
+                    draft_id = draft_result['id']
+                    drafts.append({
+                        'id': draft_id,
+                        'number': idx,
+                        'to': reply_to,
+                        'subject': f"Re: {subject}",
+                        'body': reply_body,
+                        'original_subject': subject
+                    })
+                    
+                    typer.secho(f"      ✓ Draft created", fg=typer.colors.GREEN)
+                else:
+                    typer.secho(f"      ⚠️  Failed to generate reply: {result.get('error', 'Unknown error')}", fg=typer.colors.YELLOW)
+            
+            if not drafts:
+                typer.secho("\n❌ No drafts were created", fg=typer.colors.RED)
+                return
+            
+            # Step 3: Show all drafts and get approval
+            typer.echo("")
+            typer.secho("=" * 80, fg=typer.colors.BLUE)
+            typer.secho("📝 GENERATED DRAFTS - REVIEW & APPROVE", fg=typer.colors.YELLOW, bold=True)
+            typer.secho("=" * 80, fg=typer.colors.BLUE)
+            typer.echo("")
+            
+            for draft in drafts:
+                typer.secho(f"[Draft #{draft['number']}]", fg=typer.colors.CYAN, bold=True)
+                typer.echo(f"To: {draft['to']}")
+                typer.echo(f"Subject: {draft['subject']}")
+                typer.echo(f"Original: {draft['original_subject'][:60]}...")
+                typer.echo("")
+                typer.echo("Body:")
+                typer.echo(draft['body'])
+                typer.echo("")
+                typer.secho("-" * 80, fg=typer.colors.BLUE)
+                typer.echo("")
+            
+            # Get approval
+            typer.secho("📮 Ready to send drafts!", fg=typer.colors.GREEN, bold=True)
+            typer.echo("")
+            typer.echo("Options:")
+            typer.echo("  • Type 'all' to send all drafts")
+            typer.echo("  • Type specific numbers (e.g., '1,3' or '1 3' or '2')")
+            typer.echo("  • Press Enter to cancel")
+            typer.echo("")
+            
+            approval = typer.prompt("Which drafts to send?", default="", show_default=False)
+            
+            if not approval or approval.strip() == "":
+                typer.secho("\n❌ Cancelled - No drafts sent", fg=typer.colors.YELLOW)
+                typer.echo(f"💡 Drafts are saved in Gmail. Use 'clai do mail:list-drafts' to view them.")
+                return
+            
+            # Parse approval
+            to_send = []
+            approval = approval.strip().lower()
+            
+            if approval == "all":
+                to_send = list(range(1, len(drafts) + 1))
+            else:
+                # Parse comma or space separated numbers
+                numbers_str = approval.replace(',', ' ')
+                try:
+                    to_send = [int(n) for n in numbers_str.split() if n.isdigit()]
+                except ValueError:
+                    typer.secho("\n❌ Invalid input. Cancelled.", fg=typer.colors.RED)
+                    return
+            
+            # Send approved drafts
+            typer.echo("")
+            typer.secho("📤 Sending approved drafts...", fg=typer.colors.GREEN, bold=True)
+            typer.echo("")
+            
+            from agent.tools.mail import send_draft_email
+            
+            sent_count = 0
+            for num in to_send:
+                if 1 <= num <= len(drafts):
+                    draft = drafts[num - 1]
+                    typer.echo(f"   [{num}/{len(to_send)}] Sending to {draft['to']}...")
+                    
+                    result = send_draft_email(draft['id'])
+                    if "successfully" in result.lower():
+                        typer.secho(f"      ✓ Sent!", fg=typer.colors.GREEN)
+                        sent_count += 1
+                    else:
+                        typer.secho(f"      ⚠️  Failed: {result}", fg=typer.colors.YELLOW)
+                else:
+                    typer.secho(f"   ⚠️  Invalid draft number: {num}", fg=typer.colors.YELLOW)
+            
+            typer.echo("")
+            typer.secho(f"✅ Workflow Complete! Sent {sent_count}/{len(to_send)} emails", fg=typer.colors.GREEN, bold=True)
+            return
+        
+        # Standard workflow execution for non-reply workflows
+        context = {}  # Store context between steps
+        
+        for i, step in enumerate(steps, 1):
+            command = step["command"]
+            description = step["description"]
+            needs_approval = step["needs_approval"]
+            
+            typer.secho(f"▶ Step {i}/{len(steps)}: {description}", fg=typer.colors.CYAN, bold=True)
+            typer.echo(f"   Executing: {command}")
+            typer.echo("")
+            
+            # Parse command into parts
+            parts = command.split()
+            if len(parts) < 2:
+                typer.secho(f"   ⚠️  Invalid command format: {command}", fg=typer.colors.YELLOW)
+                continue
+            
+            action = parts[0]
+            subcommand = parts[1] if len(parts) > 1 else None
+            args = parts[2:] if len(parts) > 2 else []
+            
+            # Handle different command types
+            if action == "mail:list":
+                # Extract count from "last N" or just N
+                count = 10  # default
+                sender = None
+                
+                # Parse arguments
+                if "last" in args:
+                    last_idx = args.index("last")
+                    if last_idx + 1 < len(args):
+                        try:
+                            count = int(args[last_idx + 1])
+                        except ValueError:
+                            pass
+                elif args and args[0].isdigit():
+                    count = int(args[0])
+                
+                # Check for "from" sender filter
+                if "from" in args:
+                    from_idx = args.index("from")
+                    if from_idx + 1 < len(args):
+                        sender = args[from_idx + 1]
+                
+                from agent.tools.mail import list_emails
+                result = list_emails(count=count, sender=sender)
+                typer.echo(result)
+                context["last_list_result"] = result  # Store for potential replies
+            
+            elif action == "mail:invite":
+                typer.secho("   ⚠️  Meeting invites require interactive input", fg=typer.colors.YELLOW)
+                typer.echo("   Use 'clai do mail:invite' for full functionality")
+            
+            elif action == "calendar:create":
+                typer.secho("   ⚠️  Calendar events require interactive input", fg=typer.colors.YELLOW)
+                typer.echo("   Use 'clai do calendar:create' for full functionality")
+            
+            else:
+                typer.secho(f"   ⚠️  Command type '{action}' not yet supported in auto mode", fg=typer.colors.YELLOW)
+                typer.echo(f"   Run manually: clai interpret \"{command}\"")
+            
+            # Ask for approval for sensitive operations
+            if needs_approval and not run:
+                typer.echo("")
+                continue_workflow = typer.confirm(f"Continue to step {i + 1}?", default=True)
+                if not continue_workflow:
+                    typer.secho(f"\n⚠️  Workflow stopped at step {i}", fg=typer.colors.YELLOW)
+                    return
+            
+            typer.echo("")
+        
+        typer.secho("✅ Workflow completed!", fg=typer.colors.GREEN, bold=True)
+        typer.echo("")
+        typer.secho("💡 Tip: For full interactive control, use individual commands:", fg=typer.colors.BLUE)
+        typer.echo("   • clai interpret \"your instruction\"")
+        typer.echo("   • clai draft-email \"your message\"")
+        typer.echo("   • clai do mail:reply <message-id>")
+        
+    except ImportError as e:
+        typer.secho(f"❌ Import error: {str(e)}", fg=typer.colors.RED)
+        typer.echo("Make sure agent.tools.nl_parser is available")
+    except KeyboardInterrupt:
+        typer.echo("")
+        typer.secho("❌ Workflow cancelled by user", fg=typer.colors.RED)
+    except Exception as e:
+        typer.secho(f"❌ Unexpected error: {str(e)}", fg=typer.colors.RED)
+        import traceback
+        traceback.print_exc()
+
+@app.command()
 def history(
     limit: int = typer.Option(10, "--limit", "-n", help="Number of entries to show"),
     command_type: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by command type (hi, chat, mail, do)"),
