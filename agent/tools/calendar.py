@@ -81,7 +81,8 @@ class CalendarClient:
         description: Optional[str] = None,
         location: Optional[str] = None,
         attendees: Optional[List[str]] = None,
-        duration_minutes: int = 60
+        duration_minutes: int = 60,
+        add_google_meet: bool = False
     ) -> Dict[str, Any]:
         """
         Create a calendar event.
@@ -94,9 +95,10 @@ class CalendarClient:
             location: Event location (optional)
             attendees: List of attendee email addresses (optional)
             duration_minutes: Duration in minutes if end_time not provided (default: 60)
+            add_google_meet: If True, adds Google Meet conference link (default: False)
             
         Returns:
-            Event details dictionary
+            Event details dictionary with 'meet_link' if add_google_meet=True
         """
         if not self.service:
             self.authenticate()
@@ -139,19 +141,40 @@ class CalendarClient:
             if attendees:
                 event['attendees'] = [{'email': email} for email in attendees]
             
-            # Create event
+            # Add Google Meet conference if requested
+            if add_google_meet:
+                import uuid
+                event['conferenceData'] = {
+                    'createRequest': {
+                        'requestId': str(uuid.uuid4()),
+                        'conferenceSolutionKey': {'type': 'hangoutsMeet'}
+                    }
+                }
+            
+            # Create event with conferenceDataVersion if Google Meet requested
             created_event = self.service.events().insert(
                 calendarId='primary',
-                body=event
+                body=event,
+                conferenceDataVersion=1 if add_google_meet else 0
             ).execute()
             
-            return {
+            result = {
                 'id': created_event['id'],
                 'summary': created_event['summary'],
                 'start': created_event['start'].get('dateTime', created_event['start'].get('date')),
                 'end': created_event['end'].get('dateTime', created_event['end'].get('date')),
                 'html_link': created_event.get('htmlLink', '')
             }
+            
+            # Add Google Meet link if available
+            if add_google_meet and 'conferenceData' in created_event:
+                entry_points = created_event['conferenceData'].get('entryPoints', [])
+                for entry in entry_points:
+                    if entry.get('entryPointType') == 'video':
+                        result['meet_link'] = entry.get('uri', '')
+                        break
+            
+            return result
             
         except HttpError as error:
             raise Exception(f"Calendar API error: {error}")

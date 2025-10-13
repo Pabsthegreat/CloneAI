@@ -792,18 +792,20 @@ def download_email_attachments(message_id: str, save_dir: Optional[str] = None) 
         return f"❌ Error downloading attachments: {str(e)}"
 
 
-def scan_emails_for_meetings(hours_back: int = 24) -> str:
+def scan_emails_for_meetings(hours_back: int = 24, auto_add: bool = True) -> str:
     """
-    Scan recent emails for meeting information.
+    Scan recent emails for meeting information and optionally auto-add to calendar.
     
     Args:
         hours_back: How many hours back to scan (default: 24)
+        auto_add: Automatically add detected meetings to calendar (default: True)
         
     Returns:
         Formatted list of detected meetings
     """
     try:
         from agent.tools.email_parser import EmailParser
+        from agent.tools.calendar import CalendarClient
         
         client = GmailClient()
         parser = EmailParser()
@@ -822,7 +824,11 @@ def scan_emails_for_meetings(hours_back: int = 24) -> str:
             full_msg = client.get_full_message(msg['id'])
             meeting_info = parser.extract_meeting_info(full_msg['subject'], full_msg['body'])
             
-            if meeting_info['is_meeting'] and meeting_info['suggested_datetime']:
+            # Accept meetings with either datetime or meeting link
+            has_datetime = meeting_info['suggested_datetime'] is not None
+            has_link = meeting_info['suggested_link'] is not None
+            
+            if meeting_info['is_meeting'] and ((has_datetime and has_link) or (has_link)):
                 meetings_found.append({
                     'email_id': msg['id'],
                     'from': msg['from'],
@@ -837,6 +843,17 @@ def scan_emails_for_meetings(hours_back: int = 24) -> str:
         output.append(f"\n📅 Found {len(meetings_found)} meeting(s) in emails:\n")
         output.append("=" * 80)
         
+        # Auto-add to calendar if enabled
+        calendar_client = None
+        added_count = 0
+        
+        if auto_add:
+            try:
+                calendar_client = CalendarClient()
+            except Exception as e:
+                output.append(f"\n⚠️  Warning: Could not connect to Calendar API: {str(e)}")
+                output.append("Meetings will be listed but not added to calendar.\n")
+        
         for i, meeting in enumerate(meetings_found, 1):
             info = meeting['meeting_info']
             output.append(f"\n{i}. {meeting['subject']}")
@@ -845,9 +862,27 @@ def scan_emails_for_meetings(hours_back: int = 24) -> str:
             if info['suggested_link']:
                 output.append(f"   Meeting Link: {info['suggested_link']}")
             output.append(f"   Email ID: {meeting['email_id']}")
+            
+            # Auto-add to calendar
+            if auto_add and calendar_client:
+                try:
+                    event = calendar_client.create_event(
+                        summary=meeting['subject'],
+                        start_time=info['suggested_datetime'],
+                        duration_minutes=info.get('duration', 60),
+                        description=f"From: {meeting['from']}\nMeeting Link: {info.get('suggested_link', 'N/A')}"
+                    )
+                    output.append(f"   ✅ Added to calendar: {event.get('html_link', '')}")
+                    added_count += 1
+                except Exception as e:
+                    output.append(f"   ❌ Failed to add to calendar: {str(e)}")
+            
             output.append("-" * 80)
         
-        output.append("\nUse: clai do \"mail:add-meeting email-id:MESSAGE_ID\" to add to calendar")
+        if auto_add and added_count > 0:
+            output.append(f"\n✅ Successfully added {added_count}/{len(meetings_found)} meeting(s) to your calendar!")
+        elif not auto_add:
+            output.append("\nUse: clai do \"mail:add-meeting email-id:MESSAGE_ID\" to add to calendar")
         
         return "\n".join(output)
     
@@ -952,35 +987,30 @@ def create_and_send_meeting_invite(
         from agent.tools.calendar import CalendarClient
         import uuid
         
+        meeting_link = None
+        calendar_event = None
+        
         # Generate meeting link based on platform
         if platform.lower() == 'gmeet':
-            # For Google Meet, we'll create calendar event with conferencing
+            # For Google Meet, create a real calendar event with Google Meet link
             calendar_client = CalendarClient()
             
             # Create event with Google Meet
-            event_body = {
-                'summary': subject,
-                'start': {
-                    'dateTime': time,
-                    'timeZone': 'UTC',
-                },
-                'end': {
-                    'dateTime': time,  # Will be adjusted by calendar API
-                    'timeZone': 'UTC',
-                },
-                'conferenceData': {
-                    'createRequest': {
-                        'requestId': str(uuid.uuid4()),
-                        'conferenceSolutionKey': {'type': 'hangoutsMeet'}
-                    }
-                }
-            }
+            calendar_event = calendar_client.create_event(
+                summary=subject,
+                start_time=time,
+                duration_minutes=duration,
+                description=message,
+                attendees=[to],
+                add_google_meet=True
+            )
             
-            if message:
-                event_body['description'] = message
+            # Extract the Meet link from the created event
+            meeting_link = calendar_event.get('meet_link')
             
-            # Create event (this requires additional scope)
-            meeting_link = f"https://meet.google.com/{uuid.uuid4().hex[:10]}"  # Placeholder
+            if not meeting_link:
+                # Fallback if Meet link not found
+                meeting_link = f"https://meet.google.com/{uuid.uuid4().hex[:10]}"
             
         elif platform.lower() == 'custom':
             meeting_link = message  # Use message as custom link
@@ -1005,6 +1035,10 @@ def create_and_send_meeting_invite(
         output.append(f"Time: {time}")
         output.append(f"Duration: {duration} minutes")
         output.append(f"Link: {meeting_link}")
+        
+        if calendar_event:
+            output.append(f"\n📅 Calendar event created: {calendar_event.get('html_link', 'N/A')}")
+            output.append("✅ Attendee will receive calendar invitation with Google Meet link")
         
         return "\n".join(output)
     
