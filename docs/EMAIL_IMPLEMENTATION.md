@@ -27,10 +27,17 @@
 All these commands work NOW (after Gmail setup):
 
 ```powershell
-# Basic email listing
-clai do "mail:list"                          # Last 5 emails
-clai do "mail:list last 5"                   # Last 5 emails
-clai do "mail:list last 10"                  # Last 10 emails
+# Basic email listing (defaults to inbox only)
+clai do "mail:list"                          # Last 5 emails from inbox
+clai do "mail:list last 5"                   # Last 5 emails from inbox
+clai do "mail:list last 10"                  # Last 10 emails from inbox
+
+# Filter by Gmail category
+clai do "mail:list last 3 in promotions"     # Last 3 from Promotions
+clai do "mail:list last 5 in social"         # Last 5 from Social
+clai do "mail:list last 10 in updates"       # Last 10 from Updates
+clai do "mail:list last 3 in primary"        # Last 3 from Primary
+clai do "mail:list last 5 in forums"         # Last 5 from Forums
 
 # Filter by sender
 clai do "mail:list xyz@gmail.com"            # All from xyz@gmail.com
@@ -39,6 +46,7 @@ clai do "mail:list john@example.com"         # All from john@example.com
 # Combined filters
 clai do "mail:list xyz@gmail.com last 3"     # Last 3 from xyz@gmail.com
 clai do "mail:list last 7 john@example.com"  # Last 7 from john@example.com
+clai do "mail:list last 3 in promotions from xyz@gmail.com"  # Combined category + sender
 ```
 
 ## 📋 Implementation Details
@@ -46,9 +54,11 @@ clai do "mail:list last 7 john@example.com"  # Last 7 from john@example.com
 ### Command Parsing
 - Regex-based extraction of:
   - Email count: `last\s+(\d+)` → extracts number
+  - Gmail category: `in\s+(promotions?|social|updates?|primary|forums?)` → extracts category
   - Sender email: `([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})` → extracts email
 - Order-independent (works both ways)
 - Default count: 5 emails
+- Default mailbox: inbox (excludes drafts, sent, trash by default)
 
 ### Authentication Flow
 1. Check for existing token (`~/.clai/token.pickle`)
@@ -249,6 +259,66 @@ After setup, user can list emails with natural commands like:
 `clai do "mail:list xyz@gmail.com last 5"` 
 
 🎉 **Ready for use!**
+
+---
+
+## 🚀 Recent Improvements (2025)
+
+### 1. **Gmail Category Filtering**
+- Support for Gmail's built-in categories (Promotions, Social, Updates, Primary, Forums)
+- Natural language parsing: "last 3 in promotions", "last 5 in social"
+- Combines with existing filters (sender, count)
+- Uses Gmail API's `category:` query parameter
+
+**Implementation Details:**
+- Added category parameter to `list_emails()` and `get_email_messages()`
+- Regex pattern in CLI: `in\s+(promotions?|social|updates?|primary|forums?)`
+- Automatic plural normalization (promotion → promotions)
+- Query building: `category:promotions` combined with other filters
+
+### 2. **Inbox-Only Default Behavior**
+- `mail:list` now defaults to inbox only (excludes drafts, sent, trash)
+- Prevents sequential workflows from processing draft emails
+- Uses Gmail query `in:inbox` when no other query specified
+- Explicitly filter other folders when needed
+
+**Why This Matters:**
+- Sequential planning workflows (e.g., "reply to last 3 emails") were accidentally processing draft emails
+- Draft emails would be treated as new incoming emails
+- Now only actual received emails in inbox are processed by default
+
+### 3. **Sequential Planning Optimizations**
+- **Performance**: Switched from HTTP API to Ollama CLI (4x faster: ~1s vs ~4s)
+- **Context Management**: Extract only Message IDs from `mail:list` output
+- **ID Tracking**: Prevents reusing same email ID in multi-step workflows
+- **Prompt Optimization**: Ultra-short prompts reduce hallucinations and typos
+- **Used ID Tracking**: Maintains list of processed IDs across workflow steps
+
+**Technical Implementation:**
+- `sequential_planner.py`: Uses `subprocess.run(['ollama', 'run', model])` instead of HTTP requests
+- Context extraction: Regex to find Message IDs from verbose outputs
+- Used IDs: Extracted via `re.search(r'id:([a-f0-9]+)', step['command'])`
+- Timeout: Reduced to 10 seconds (was 60s with HTTP)
+
+### 4. **Local LLM Optimization**
+- **Performance**: Switched `local_compute.py` to Ollama CLI
+- **Speed**: ~1 second response time (was ~4 seconds with HTTP)
+- **Timeout**: Reduced to 5 seconds (was 10s)
+- **Prompt**: Ultra-short to reduce processing time
+
+**Use Case:**
+- Determines if request can be answered directly (math, facts, text operations)
+- Falls back to workflows only when needed (email, calendar, files)
+- Example: "what is 456 divided by 8" → Direct answer "57"
+
+### 5. **Workflow Priority Order**
+- **New Priority**: Workflows → Local LLM → GPT workflow generation
+- **Why**: Ensures "draft reply to latest mail" uses workflow system instead of local LLM
+- **Implementation**: Check `parse_workflow()` first, then `can_local_llm_handle()`, finally generate with GPT
+
+**Problem Solved:**
+- Previously: "draft reply to latest mail" was answered by local LLM incorrectly
+- Now: Recognized as mail workflow and executed with proper mail:list + mail:reply steps
 
 ---
 

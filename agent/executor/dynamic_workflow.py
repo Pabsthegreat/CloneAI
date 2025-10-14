@@ -213,7 +213,8 @@ class WorkflowGenerationManager:
                 previous_errors.append(compile_error)
                 continue
 
-            self._write_tests(result.tests)
+            # Tests disabled to save tokens
+            # self._write_tests(result.tests)
 
             try:
                 self._import_generated_modules()

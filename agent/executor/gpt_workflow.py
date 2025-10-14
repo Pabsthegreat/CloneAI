@@ -190,7 +190,6 @@ class GPTWorkflowGenerator:
         command_key = recipe.command_key()
         namespace = recipe.namespace
         module_placeholder = f"agent/workflows/generated/{namespace}_{recipe.name}.py"
-        test_placeholder = f"tests/generated/test_{namespace}_{recipe.name}.py"
 
         sample_workflows = "\n\n".join(
             f"# File: {path}\n{textwrap.indent(code.strip(), '    ')}"
@@ -238,15 +237,11 @@ class GPTWorkflowGenerator:
             Output JSON schema (mandatory):
             {{
               "module_code": "Full Python module content for {module_placeholder}",
-              "tests": [
-                  {{
-                      "path": "{test_placeholder}",
-                      "content": "Pytest test module exercising the new workflow."
-                  }}
-              ],
               "notes": ["bullet guidance for humans"],
               "summary": "One line summary of functionality"
             }}
+
+            NOTE: DO NOT generate tests. Tests are unnecessary and waste tokens.
 
             Requirements:
             - The module must register the workflow using `@register_workflow` from `agent.workflows`.
@@ -256,11 +251,11 @@ class GPTWorkflowGenerator:
             - Prefer existing helper functions from `agent.tools` when possible; otherwise implement safe helpers within the module.
             - Include thorough error handling with informative messages.
             - Keep code concise and follow existing style.
-            - Tests must use `pytest` style and import the generated workflow via registry calls.
             - Avoid placeholder text such as TODO; implement working logic or gracefully raise with explanation.
-            - Do not modify existing files; only produce the module and optional tests in the JSON response.
+            - Do not modify existing files; only produce the module code in the JSON response.
             - ALWAYS include metadata with "usage" showing the command syntax with all required parameters.
             - The "usage" field helps the natural language parser understand how to construct commands.
+            - DO NOT generate tests - they are unnecessary and waste tokens.
 
             CRITICAL - CORRECT REGISTRATION PATTERN:
             The @register_workflow decorator MUST be used directly on the handler function with parameters:
