@@ -17,6 +17,13 @@ from agent.workflows import build_command_reference
 COMMAND_REFERENCE = build_command_reference()
 
 
+def refresh_command_reference() -> str:
+    """Regenerate the command reference after workflows are added."""
+    global COMMAND_REFERENCE
+    COMMAND_REFERENCE = build_command_reference()
+    return COMMAND_REFERENCE
+
+
 def get_user_context() -> str:
     """
     Build user context information for the LLM.

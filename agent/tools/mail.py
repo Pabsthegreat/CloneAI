@@ -108,6 +108,10 @@ class GmailClient:
             if sender and not query:
                 query = f"from:{sender}"
             
+            # Default to inbox only (exclude drafts, sent, etc.) if no query specified
+            if not query:
+                query = "in:inbox"
+            
             # Get message list
             results = self.service.users().messages().list(
                 userId='me',
@@ -599,6 +603,7 @@ def get_email_messages(
     count: int = 5,
     sender: Optional[str] = None,
     query: Optional[str] = None,
+    category: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Retrieve raw email message metadata with graceful fallbacks for sender matching.
@@ -620,10 +625,18 @@ def get_email_messages(
             seen.add(key)
             attempts.append((attempt_sender, attempt_query))
 
+    # Build base query with category if specified
+    base_query = None
+    if category:
+        base_query = f"category:{category}"
+    
     if query:
+        # Combine category with custom query if both present
+        if base_query:
+            query = f"{base_query} {query}"
         add_attempt(None, query)
     else:
-        add_attempt(sender, None)
+        add_attempt(sender, base_query)
         if sender:
             normalized = sender.strip()
             add_attempt(None, f"from:{normalized}")
@@ -658,6 +671,7 @@ def list_emails(
     count: int = 5,
     sender: Optional[str] = None,
     query: Optional[str] = None,
+    category: Optional[str] = None,
 ) -> str:
     """
     List emails from Gmail.
@@ -666,12 +680,13 @@ def list_emails(
         count: Number of emails to list (default: 5)
         sender: Filter by sender email address (optional)
         query: Additional Gmail query string (optional)
+        category: Gmail category (promotions, social, updates, primary, forums)
         
     Returns:
         Formatted string of email list
     """
     try:
-        messages = get_email_messages(count=count, sender=sender, query=query)
+        messages = get_email_messages(count=count, sender=sender, query=query, category=category)
         return format_email_list(messages)
     except FileNotFoundError as e:
         return f"❌ Error: {str(e)}"

@@ -1,6 +1,7 @@
 """Workflow registration and execution utilities for CloneAI."""
 
 from importlib import import_module
+from pathlib import Path
 from typing import Iterable, Tuple
 
 from .registry import (
@@ -21,6 +22,7 @@ from .catalog import LEGACY_SECTIONS, LEGACY_NOTES
 _BUILTIN_WORKFLOW_MODULES: Tuple[str, ...] = (
     "mail",
 )
+_GENERATED_PACKAGE = f"{__name__}.generated"
 
 
 def load_builtin_workflows(modules: Iterable[str] | None = None) -> None:
@@ -34,6 +36,25 @@ def load_builtin_workflows(modules: Iterable[str] | None = None) -> None:
     module_names = tuple(modules) if modules is not None else _BUILTIN_WORKFLOW_MODULES
     for module_name in module_names:
         import_module(f"{__name__}.{module_name}")
+    load_generated_workflows()
+
+
+def load_generated_workflows() -> None:
+    """Load all dynamically generated workflow modules."""
+    try:
+        generated_pkg = import_module(_GENERATED_PACKAGE)
+    except ModuleNotFoundError:
+        return
+
+    pkg_path = Path(getattr(generated_pkg, "__file__", "")).parent
+    if not pkg_path.exists():
+        return
+
+    for file_path in sorted(pkg_path.glob("*.py")):
+        if file_path.name.startswith("_") or file_path.stem == "__init__":
+            continue
+        module_name = f"{_GENERATED_PACKAGE}.{file_path.stem}"
+        import_module(module_name)
 
 
 def build_command_reference(include_legacy: bool = True) -> str:
@@ -90,5 +111,6 @@ __all__ = [
     "register_workflow",
     "registry",
     "load_builtin_workflows",
+    "load_generated_workflows",
     "build_command_reference",
 ]

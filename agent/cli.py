@@ -150,66 +150,127 @@ def execute_single_command(action: str, *, extras: Optional[Dict[str, Any]] = No
         registry_extras = extras
     if "logger" not in registry_extras:
         registry_extras["logger"] = get_logger()
-    try:
-        workflow_result = workflow_registry.execute(action, extras=registry_extras)
-        output = workflow_result.output
-        if not isinstance(output, str):
-            output = str(output)
+    
+    # Check if this is a legacy command (hardcoded in cli.py) BEFORE trying registry
+    # Extract base command (namespace:action) without parameters
+    base_command = action.split()[0] if ' ' in action else action
+    
+    # List of legacy command prefixes that are handled with elif statements below
+    legacy_commands = [
+        'mail:list', 'mail:draft', 'mail:drafts', 'mail:reply', 
+        'mail:send', 'mail:search', 'mail:priority',
+        'doc:open', 'doc:search', 'doc:list', 'doc:upload', 'doc:merge-pdf',
+        'cal:list', 'cal:add', 'cal:today', 'cal:next',
+        'sys:info'
+    ]
+    
+    # If it's a legacy command, skip registry and fall through to elif handlers
+    is_legacy = any(base_command.startswith(prefix) for prefix in legacy_commands)
+    
+    if not is_legacy:
+        # Try workflow registry for modern registered workflows
+        try:
+            workflow_result = workflow_registry.execute(action, extras=registry_extras)
+            output = workflow_result.output
+            if not isinstance(output, str):
+                output = str(output)
 
-        metadata = {
-            "workflow": registry_extras.get(
-                "workflow", workflow_result.spec.command_key()
-            ),
-            "namespace": workflow_result.spec.namespace,
-            "arguments": workflow_result.arguments,
-            "source": "workflow_registry",
-        }
-        parameters_meta = registry_extras.get("parameters")
-        if parameters_meta:
-            metadata["parameters"] = parameters_meta
+            metadata = {
+                "workflow": registry_extras.get(
+                    "workflow", workflow_result.spec.command_key()
+                ),
+                "namespace": workflow_result.spec.namespace,
+                "arguments": workflow_result.arguments,
+                "source": "workflow_registry",
+            }
+            parameters_meta = registry_extras.get("parameters")
+            if parameters_meta:
+                metadata["parameters"] = parameters_meta
 
-        if workflow_result.spec.metadata:
-            metadata["workflow_metadata"] = dict(workflow_result.spec.metadata)
+            if workflow_result.spec.metadata:
+                metadata["workflow_metadata"] = dict(workflow_result.spec.metadata)
 
-        log_command(
-            command=f"do {action}",
-            output=output,
-            command_type=workflow_result.spec.namespace,
-            metadata=metadata,
-        )
-        return output
-    except WorkflowNotFoundError:
-        pass
-    except (WorkflowValidationError, WorkflowExecutionError) as workflow_error:
-        header = action.strip().split(" ", 1)[0] if action else ""
-        namespace, _, _ = header.partition(":")
-        error_metadata = {
-            "workflow": header if ":" in header else None,
-            "error": True,
-            "detail": str(workflow_error),
-            "source": "workflow_registry",
-        }
-        command_type = namespace or "workflow"
-        log_command(
-            command=f"do {action}",
-            output=f"❌ {workflow_error}",
-            command_type=command_type,
-            metadata=error_metadata,
-        )
-        return f"❌ {workflow_error}"
+            log_command(
+                command=f"do {action}",
+                output=output,
+                command_type=workflow_result.spec.namespace,
+                metadata=metadata,
+            )
+            return output
+        except WorkflowNotFoundError:
+            # Not in registry, try GPT generation
+            typer.secho(f"⚠️ Command '{action}' is not supported yet.", fg=typer.colors.YELLOW)
+            typer.secho("🤖 Attempting to generate a new workflow via GPT-4.1...", fg=typer.colors.MAGENTA)
+            from agent.executor.dynamic_workflow import dynamic_manager
+
+            generation_result = dynamic_manager.ensure_workflow(action, extras=registry_extras)
+            if generation_result.success and generation_result.output is not None:
+                metadata = {
+                    "workflow": f"{generation_result.spec_namespace}:{generation_result.spec_name}"
+                    if generation_result.spec_namespace and generation_result.spec_name
+                    else action,
+                    "namespace": generation_result.spec_namespace or "generated",
+                    "arguments": generation_result.arguments or {},
+                    "source": "workflow_generator",
+                }
+                if generation_result.notes:
+                    metadata["notes"] = generation_result.notes
+                if generation_result.summary:
+                    metadata["summary"] = generation_result.summary
+
+                log_command(
+                    command=f"do {action}",
+                    output=generation_result.output,
+                    command_type=metadata["namespace"],
+                    metadata=metadata,
+                )
+                return generation_result.output
+
+            if generation_result.errors:
+                typer.secho("❌ Workflow generation failed:", fg=typer.colors.RED)
+                for err in generation_result.errors[-2:]:
+                    typer.echo(f"   • {err}")
+            else:
+                typer.secho("❌ Unable to generate workflow automatically.", fg=typer.colors.RED)
+        except (WorkflowValidationError, WorkflowExecutionError) as workflow_error:
+            header = action.strip().split(" ", 1)[0] if action else ""
+            namespace, _, _ = header.partition(":")
+            error_metadata = {
+                "workflow": header if ":" in header else None,
+                "error": True,
+                "detail": str(workflow_error),
+                "source": "workflow_registry",
+            }
+            command_type = namespace or "workflow"
+            log_command(
+                command=f"do {action}",
+                output=f"❌ {workflow_error}",
+                command_type=command_type,
+                metadata=error_metadata,
+            )
+            return f"❌ {workflow_error}"
     
     # Parse mail:list commands
     if action.startswith("mail:list"):
         from agent.tools.mail import list_emails
         
         # Extract parameters
-        count = 5  # default
+        count = 1  # default
         sender = None
+        category = "primary"
         
         # Parse "last N" pattern
         last_match = re.search(r'last\s+(\d+)', action, re.IGNORECASE)
         if last_match:
             count = int(last_match.group(1))
+        
+        # Parse Gmail category/label (promotions, social, updates, primary, forums)
+        category_match = re.search(r'in\s+(promotions?|social|updates?|primary|forums?)', action, re.IGNORECASE)
+        if category_match:
+            category = category_match.group(1).lower()
+            # Normalize plurals
+            if category in ['promotion', 'update', 'forum']:
+                category = category + 's'
         
         # Parse email address pattern
         email_match = re.search(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', action)
@@ -218,14 +279,14 @@ def execute_single_command(action: str, *, extras: Optional[Dict[str, Any]] = No
         
         # Execute
         try:
-            result = list_emails(count=count, sender=sender)
+            result = list_emails(count=count, sender=sender, category=category)
             
             # Log the command
             log_command(
                 command=f"do {action}",
                 output=result,
                 command_type="mail",
-                metadata={"count": count, "sender": sender, "action": "list"}
+                metadata={"count": count, "sender": sender, "category": category, "action": "list"}
             )
             return result
         except Exception as e:
@@ -236,7 +297,7 @@ def execute_single_command(action: str, *, extras: Optional[Dict[str, Any]] = No
                 command=f"do {action}",
                 output=error_msg,
                 command_type="mail",
-                metadata={"count": count, "sender": sender, "action": "list", "error": True}
+                metadata={"count": count, "sender": sender, "category": category, "action": "list", "error": True}
             )
             return error_msg
     
@@ -1595,18 +1656,44 @@ def auto(
     """
     try:
         from agent.tools.nl_parser import parse_workflow
+        from agent.tools.local_compute import can_local_llm_handle
         
         typer.secho(f"\n🔄 Parsing workflow: '{instruction}'", fg=typer.colors.CYAN, bold=True)
         
-        # Parse the workflow
+        # PRIORITY 1: Try to map to existing workflows first
         result = parse_workflow(instruction)
         
-        if not result["success"]:
-            typer.secho(f"❌ Failed to parse workflow: {result.get('error', 'Unknown error')}", fg=typer.colors.RED)
-            return
+        if not result["success"] or not result.get("steps"):
+            # PRIORITY 2: Check if local LLM can handle without workflows
+            typer.secho("\n🧠 No workflow found, checking if local LLM can handle...", fg=typer.colors.MAGENTA, dim=True)
+            can_handle, local_result = can_local_llm_handle(instruction)
+            if can_handle and local_result:
+                typer.echo("")
+                typer.secho("💡 Computed locally (no API calls needed):", fg=typer.colors.GREEN, bold=True)
+                typer.echo(local_result)
+                typer.echo("")
+                return
+            else:
+                # PRIORITY 3: Workflow generation would go here (already handled by execute_single_command)
+                typer.secho(f"❌ Failed to parse workflow: {result.get('error', 'Unknown error')}", fg=typer.colors.RED)
+                return
         
         steps = result["steps"]
         reasoning = result.get("reasoning", "")
+        
+        # PRIORITY 2.5: If single-step workflow and command doesn't exist, try local LLM before GPT generation
+        if len(steps) == 1:
+            first_command = steps[0]["command"]
+            # Quick check: if it's a simple operation that local LLM can handle, try that first
+            typer.secho("\n🧠 Checking if local LLM can handle...", fg=typer.colors.MAGENTA, dim=True)
+            can_handle, local_result = can_local_llm_handle(instruction)
+            if can_handle and local_result:
+                typer.echo("")
+                typer.secho("💡 Computed locally (no API calls needed):", fg=typer.colors.GREEN, bold=True)
+                typer.echo(local_result)
+                typer.echo("")
+                return
+            typer.secho("   → Using workflow\n", fg=typer.colors.MAGENTA, dim=True)
         
         # Display workflow plan
         typer.echo("")
@@ -1624,6 +1711,13 @@ def auto(
             typer.echo(f"           Command: {command}")
             typer.echo(f"           {needs_approval}")
         
+        # Check if we need sequential re-planning (has placeholders like MESSAGE_ID)
+        has_placeholders = any("MESSAGE_ID" in step.get("command", "") or "DRAFT_ID" in step.get("command", "") 
+                              for step in steps)
+        
+        if has_placeholders:
+            typer.secho("\n💡 Detected dynamic workflow - will plan steps sequentially", fg=typer.colors.BLUE, dim=True)
+        
         # Get approval unless --run flag is set
         if not run:
             typer.echo("")
@@ -1640,6 +1734,7 @@ def auto(
         workflow_outputs = []
         auto_context: Dict[str, List[str]] = {}
         instruction_lower = instruction.lower()
+        completed_steps = []  # Track for sequential planning
 
         def resolve_placeholders(raw_command: str) -> str:
             resolved = raw_command
@@ -1651,7 +1746,10 @@ def auto(
                 resolved = resolved.replace("DRAFT_ID", draft_ids[0], 1)
             return resolved
 
-        for i, step in enumerate(steps, 1):
+        i = 0
+        while i < len(steps):
+            i += 1
+            step = steps[i - 1]
             command = step.get("command", "").strip()
             description = step.get("description", "").strip() or command
             needs_approval = bool(step.get("needs_approval"))
@@ -1701,6 +1799,34 @@ def auto(
                 typer.echo("")
                 typer.echo(result)
             typer.echo("")
+            
+            # Track completed steps for sequential planning
+            completed_steps.append({"command": command_to_run, "output": result or ""})
+            
+            # SEQUENTIAL RE-PLANNING: After each step with placeholders, plan next step dynamically
+            if has_placeholders and i < len(steps):
+                # Check if next step has placeholder
+                next_step = steps[i] if i < len(steps) else None
+                if next_step and ("MESSAGE_ID" in next_step.get("command", "") or "DRAFT_ID" in next_step.get("command", "")):
+                    from agent.tools.sequential_planner import plan_next_step
+                    
+                    typer.secho("🔄 Planning next step based on output...", fg=typer.colors.MAGENTA, dim=True)
+                    
+                    remaining_goal = reasoning  # Use original reasoning as goal
+                    planned_step = plan_next_step(instruction, completed_steps, remaining_goal)
+                    
+                    if planned_step and planned_step.get('has_next_step'):
+                        # Replace the placeholder step with the dynamically planned one
+                        steps[i] = {
+                            "command": planned_step.get('command', ''),
+                            "description": planned_step.get('description', ''),
+                            "needs_approval": planned_step.get('needs_approval', False)
+                        }
+                        typer.secho(f"   → Next step: {planned_step.get('command', '')}\n", fg=typer.colors.MAGENTA, dim=True)
+                    else:
+                        # No more steps needed, truncate the workflow
+                        steps = steps[:i]
+                        typer.secho("   → No more steps needed\n", fg=typer.colors.MAGENTA, dim=True)
 
             # Extract draft IDs from output when available
             if command_to_run.startswith("mail:draft") or (command_to_run.startswith("mail:send") and "draft-id:" not in command_to_run):
