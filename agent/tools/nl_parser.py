@@ -4,79 +4,68 @@ Natural Language Command Parser using Ollama (Qwen3:4b-instruct)
 This module translates natural language instructions into CloneAI commands.
 """
 
+import datetime
 import json
+import os
 import subprocess
 import sys
-from typing import Dict, Optional, List
-import datetime
-import os
+from typing import Dict, List, Optional
+
+from agent.workflows import build_command_reference
+
+# Command documentation for the LLM (generated from the workflow registry plus legacy commands)
+COMMAND_REFERENCE = build_command_reference()
 
 
-# Command documentation for the LLM
-COMMAND_REFERENCE = """
-CloneAI Command Reference:
-==========================
+def get_user_context() -> str:
+    """
+    Build user context information for the LLM.
+    Returns context about current directory, user info, etc.
+    """
+    cwd = os.getcwd()
+    
+    # Try to get user info from environment or config
+    home_dir = os.path.expanduser("~")
+    username = os.environ.get("USER") or os.environ.get("USERNAME") or "User"
+    
+    # Check if there's a .clai config with user info
+    user_info = {
+        "name": username,
+        "email": None,
+        "srn": "PES1UG23CS022",  # Default SRN, can be customized
+    }
+    
+    config_path = os.path.join(home_dir, ".clai", "user_config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                saved_config = json.load(f)
+                user_info.update(saved_config)
+        except:
+            pass
+    
+    context = f"""CURRENT CONTEXT:
+- Working Directory: {cwd}
+- User: {user_info['name']}
+- SRN/ID: {user_info['srn']}"""
+    
+    if user_info.get('email'):
+        context += f"\n- Email: {user_info['email']}"
+    
+    context += f"""
 
-EMAIL COMMANDS:
-- mail:list [last N] [from EMAIL]           # List emails (default: last 5)
-- mail:view id:MESSAGE_ID                   # View full email content
-- mail:download id:MESSAGE_ID [dir:PATH]    # Download email attachments
-- mail:draft to:EMAIL subject:TEXT body:TEXT [cc:EMAIL] [bcc:EMAIL]  # Create draft
-- mail:send to:EMAIL subject:TEXT body:TEXT [cc:EMAIL] [bcc:EMAIL] [attachments:PATHS]  # Send email
-- mail:send draft-id:DRAFT_ID               # Send existing draft
-- mail:drafts [last N]                      # List draft emails
-- mail:priority [last N]                    # List priority emails
-- mail:priority-add EMAIL|@DOMAIN           # Add priority sender
-- mail:priority-remove EMAIL|@DOMAIN        # Remove priority sender
-- mail:priority-list                        # Show priority configuration
-- mail:scan-meetings [hours:N]              # Scan for meeting invitations
-- mail:add-meeting email-id:MSG_ID [time:DATETIME]  # Add meeting to calendar
-- mail:invite to:EMAIL subject:TEXT time:DATETIME duration:MINS [platform:TEXT]  # Send meeting invite
+IMPORTANT PATH RULES:
+- When user mentions files in "this folder", "current folder", "cloneai folder", use the working directory: {cwd}
+- For files mentioned without path, assume they are in: {cwd}
+- Example: "file.pdf" should be referenced as just "file.pdf" (not "cloneai/file.pdf")
+- Use relative paths from current directory: {cwd}
 
-CALENDAR COMMANDS:
-- calendar:create title:TEXT start:DATETIME [end:DATETIME|duration:MINS] [location:TEXT] [description:TEXT]
-- calendar:list [next N]                    # List upcoming events (default: next 10)
-
-SCHEDULER COMMANDS:
-- tasks                                     # List all scheduled tasks
-- task:add name:TEXT command:COMMAND time:HH:MM  # Add scheduled task
-- task:remove TASK_ID                       # Remove task by ID
-- task:toggle TASK_ID                       # Enable/disable task
-
-DOCUMENT COMMANDS:
-- merge pdf                                 # Merge PDF files (interactive)
-- merge ppt                                 # Merge PowerPoint files (interactive)
-- convert pdf-to-docx                       # Convert PDF to Word (interactive)
-- convert docx-to-pdf                       # Convert Word to PDF (interactive, Windows only)
-- convert ppt-to-pdf                        # Convert PPT to PDF (interactive, Windows only)
-
-CASCADING COMMANDS:
-- COMMAND1 && COMMAND2 && COMMAND3          # Chain multiple commands
-
-Examples:
-- "show me my last 10 emails" → mail:list last 10
-- "list emails from john@example.com" → mail:list from john@example.com
-- "download attachments from message 199abc123" → mail:download id:199abc123
-- "create a meeting called Team Sync on Oct 15 at 2pm for 1 hour" → calendar:create title:Team Sync start:2025-10-15T14:00:00 duration:60
-- "show my next 5 calendar events" → calendar:list next 5
-- "send email to bob@test.com with subject Hello and body Hi there" → mail:send to:bob@test.com subject:Hello body:Hi there
-
-IMPORTANT NOTES:
-- Message IDs are hexadecimal strings (e.g., 199abc123def)
-- Datetime format: YYYY-MM-DDTHH:MM:SS (e.g., 2025-10-15T14:00:00)
-- Time format for tasks: HH:MM (24-hour, e.g., 09:00, 14:30)
-- Duration in minutes (e.g., 60 for 1 hour, 30 for 30 minutes)
-- Multiple attachments: comma-separated paths (no spaces)
-- If user says "last 5 emails", use "mail:list last 5"
-- If user mentions downloading attachments, they need to provide the message ID
-
-CRITICAL MEETING RULES:
-- If user mentions scheduling/creating a meeting WITH another person's EMAIL → use mail:invite (sends email invitation)
-- If user only wants to add to their OWN calendar (no email mentioned) → use calendar:create
-- mail:invite REQUIRES: to:EMAIL, subject:TOPIC, time:DATETIME, duration:MINS
-- Example: "schedule meeting with john@test.com" → mail:invite to:john@test.com ...
-- Example: "add to my calendar" → calendar:create ...
+USER PERSONALIZATION:
+- When user says "my SRN" or "my ID", use: {user_info['srn']}
+- When user says "send from me" or "my email", the system will use authenticated Gmail account
 """
+    
+    return context
 
 
 def call_ollama(prompt: str, model: str = "qwen3:4b-instruct") -> Optional[str]:
@@ -137,7 +126,11 @@ def parse_natural_language(user_input: str, model: str = "qwen3:4b-instruct") ->
         - success: Boolean indicating if parsing was successful
     """
     
+    user_context = get_user_context()
+    
     prompt = f"""You are a command parser for CloneAI, a CLI tool. Convert the user's natural language request into the exact CloneAI command syntax.
+
+{user_context}
 
 {COMMAND_REFERENCE}
 
@@ -156,7 +149,7 @@ Rules:
 3. If the request is ambiguous, make reasonable assumptions
 4. If you need information (like message ID), mention it in explanation
 5. For dates, use ISO format (YYYY-MM-DDTHH:MM:SS)
-6. For "today" use current date {sys.current_date}, "tomorrow" is {sys.current_date + datetime.timedelta(days=1)}
+6. For "today" use current date {datetime.date.today()}, "tomorrow" is {datetime.date.today() + datetime.timedelta(days=1)}
 7. For subject/title/body text with spaces, keep them as-is (spaces are OK)
 8. Use 24-hour time format (1:30 PM = 13:30, 2:00 PM = 14:00)
 
@@ -262,7 +255,11 @@ def parse_workflow(instruction: str, model: str = "qwen3:4b-instruct") -> Dict[s
         - success: Boolean indicating if parsing was successful
     """
     
+    user_context = get_user_context()
+    
     prompt = f"""You are a workflow parser for CloneAI. Break down multi-step tasks into a sequence of CloneAI commands.
+
+{user_context}
 
 {COMMAND_REFERENCE}
 
@@ -282,15 +279,34 @@ Analyze the workflow and create a step-by-step execution plan. Respond with ONLY
 
 WORKFLOW RULES:
 1. Break complex tasks into atomic commands
-2. For "check emails and reply", list emails first, then generate replies for each
+2. For "check emails and reply", list emails first, then use mail:reply for each
 3. Set needs_approval=true for actions that send/delete/modify data
 4. Set needs_approval=false for read-only operations (list, view, etc.)
-5. For "reply to emails", add individual reply steps for each email
+5. **IMPORTANT**: For replying to emails, use "mail:reply id:MESSAGE_ID" (NOT mail:draft)
+   - The mail:reply command automatically handles reply subject (adds "Re:") and context
+   - AI will generate professional reply body automatically
+   - The system will ask user if they want to send the reply
+6. **IMPORTANT**: For sending NEW emails, ALWAYS use "mail:draft" command (NOT "mail:send")
+   - The system will automatically ask user if they want to send the draft
+   - Even if user says "send email", create a draft first
+   - Body is optional in mail:draft - if missing, AI will generate it
+7. If user doesn't provide email body, omit body:text - AI will generate it
 
 Examples:
+- "send email to john@test.com about meeting" → 
+  Step 1: mail:draft to:john@test.com subject:Meeting Discussion
+  (Note: No body:text needed, AI will generate it)
+
+- "reply to last email from john@test.com" → 
+  Step 1: mail:list last 5 sender:john@test.com
+  Step 2: mail:reply id:MESSAGE_ID
+  (Note: MESSAGE_ID will be from Step 1 results)
+
 - "check last 5 emails and reply to them" → 
   Step 1: mail:list last 5
-  Step 2: (for each email) generate reply and send
+  Step 2: mail:reply id:MESSAGE_ID (for first email)
+  Step 3: mail:reply id:MESSAGE_ID (for second email)
+  etc.
 
 Respond with JSON only:"""
 
@@ -352,10 +368,15 @@ def generate_email_content(instruction: str, user_context: str = "", model: str 
         - success: Boolean indicating if generation was successful
     """
     
+    # Get system context (working directory, user info)
+    system_context = get_user_context()
+    
     prompt = f"""You are an email composition assistant. Generate a professional email based on the user's instruction.
 
+{system_context}
+
 User instruction: "{instruction}"
-{f"Context: {user_context}" if user_context else ""}
+{f"Additional Context: {user_context}" if user_context else ""}
 
 Generate a professional, clear, and appropriately formal email. Respond with ONLY a valid JSON object (no markdown, no extra text):
 {{

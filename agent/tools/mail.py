@@ -6,7 +6,7 @@ Supports listing emails from Gmail with various filters.
 import os
 import pickle
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timedelta
 import json
 
@@ -149,7 +149,7 @@ class GmailClient:
         except HttpError as error:
             raise Exception(f"Gmail API error: {error}")
     
-    def create_draft(self, to: str, subject: str, body: str, cc: Optional[str] = None, bcc: Optional[str] = None) -> Dict[str, Any]:
+    def create_draft(self, to: str, subject: str, body: str, cc: Optional[str] = None, bcc: Optional[str] = None, attachments: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Create a draft email in Gmail.
         
@@ -159,6 +159,7 @@ class GmailClient:
             body: Email body text
             cc: CC recipients (optional)
             bcc: BCC recipients (optional)
+            attachments: List of file paths to attach (optional)
             
         Returns:
             Draft details dictionary
@@ -167,14 +168,45 @@ class GmailClient:
             self.authenticate()
         
         try:
-            # Create message
-            message = MIMEText(body)
+            # Create message with or without attachments
+            if attachments:
+                message = MIMEMultipart()
+            else:
+                message = MIMEText(body)
+            
             message['to'] = to
             message['subject'] = subject
             if cc:
                 message['cc'] = cc
             if bcc:
                 message['bcc'] = bcc
+            
+            # Add body if using multipart
+            if attachments:
+                message.attach(MIMEText(body, 'plain'))
+                
+                # Add attachments
+                for file_path in attachments:
+                    if not os.path.exists(file_path):
+                        raise FileNotFoundError(f"Attachment not found: {file_path}")
+                    
+                    # Guess the content type
+                    content_type, _ = mimetypes.guess_type(file_path)
+                    if content_type is None:
+                        content_type = 'application/octet-stream'
+                    
+                    main_type, sub_type = content_type.split('/', 1)
+                    
+                    with open(file_path, 'rb') as f:
+                        attachment = MIMEBase(main_type, sub_type)
+                        attachment.set_payload(f.read())
+                    
+                    encoders.encode_base64(attachment)
+                    attachment.add_header(
+                        'Content-Disposition',
+                        f'attachment; filename={os.path.basename(file_path)}'
+                    )
+                    message.attach(attachment)
             
             # Encode message
             raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
@@ -189,7 +221,8 @@ class GmailClient:
                 'id': draft['id'],
                 'message_id': draft['message']['id'],
                 'to': to,
-                'subject': subject
+                'subject': subject,
+                'attachments': len(attachments) if attachments else 0
             }
             
         except HttpError as error:
@@ -562,20 +595,83 @@ def format_email_list(messages: List[Dict[str, Any]]) -> str:
     return "\n".join(output)
 
 
-def list_emails(count: int = 5, sender: Optional[str] = None) -> str:
+def get_email_messages(
+    count: int = 5,
+    sender: Optional[str] = None,
+    query: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Retrieve raw email message metadata with graceful fallbacks for sender matching.
+
+    Attempts, in order:
+        1. Provided query/sender parameters.
+        2. Gmail `from:` search using the sender string.
+        3. If sender contains '@', try domain and local-part separately.
+        4. If sender lacks '@', treat it directly as a substring query.
+    """
+    client = GmailClient()
+
+    attempts: List[Tuple[Optional[str], Optional[str]]] = []
+    seen: set[Tuple[str, str]] = set()
+
+    def add_attempt(attempt_sender: Optional[str], attempt_query: Optional[str]) -> None:
+        key = (attempt_sender or "", attempt_query or "")
+        if key not in seen:
+            seen.add(key)
+            attempts.append((attempt_sender, attempt_query))
+
+    if query:
+        add_attempt(None, query)
+    else:
+        add_attempt(sender, None)
+        if sender:
+            normalized = sender.strip()
+            add_attempt(None, f"from:{normalized}")
+            if "@" in normalized:
+                local_part, _, domain = normalized.partition("@")
+                if domain:
+                    add_attempt(None, f"from:{domain}")
+                if local_part:
+                    add_attempt(None, f"from:{local_part}")
+            else:
+                add_attempt(None, f"from:{normalized}")
+
+    if not attempts:
+        add_attempt(None, None)
+
+    last_messages: List[Dict[str, Any]] = []
+
+    for attempt_sender, attempt_query in attempts:
+        messages = client.list_messages(
+            max_results=count,
+            sender=attempt_sender,
+            query=attempt_query,
+        )
+        if messages:
+            return messages
+        last_messages = messages
+
+    return last_messages
+
+
+def list_emails(
+    count: int = 5,
+    sender: Optional[str] = None,
+    query: Optional[str] = None,
+) -> str:
     """
     List emails from Gmail.
     
     Args:
         count: Number of emails to list (default: 5)
         sender: Filter by sender email address (optional)
+        query: Additional Gmail query string (optional)
         
     Returns:
         Formatted string of email list
     """
     try:
-        client = GmailClient()
-        messages = client.list_messages(max_results=count, sender=sender)
+        messages = get_email_messages(count=count, sender=sender, query=query)
         return format_email_list(messages)
     except FileNotFoundError as e:
         return f"❌ Error: {str(e)}"
@@ -583,7 +679,7 @@ def list_emails(count: int = 5, sender: Optional[str] = None) -> str:
         return f"❌ Error listing emails: {str(e)}"
 
 
-def create_draft_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: Optional[str] = None) -> str:
+def create_draft_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: Optional[str] = None, attachments: Optional[List[str]] = None) -> str:
     """
     Create a draft email in Gmail.
     
@@ -593,19 +689,24 @@ def create_draft_email(to: str, subject: str, body: str, cc: Optional[str] = Non
         body: Email body text
         cc: CC recipients (optional)
         bcc: BCC recipients (optional)
+        attachments: List of file paths to attach (optional)
         
     Returns:
         Success message with draft details
     """
     try:
         client = GmailClient()
-        draft = client.create_draft(to=to, subject=subject, body=body, cc=cc, bcc=bcc)
+        draft = client.create_draft(to=to, subject=subject, body=body, cc=cc, bcc=bcc, attachments=attachments)
         
         output = []
         output.append("\n✅ Draft created successfully!")
         output.append(f"\nDraft ID: {draft['id']}")
         output.append(f"To: {draft['to']}")
         output.append(f"Subject: {draft['subject']}")
+        if attachments:
+            output.append(f"Attachments: {len(attachments)} file(s)")
+            for att in attachments:
+                output.append(f"  - {os.path.basename(att)}")
         output.append("\nYou can find this draft in your Gmail drafts folder.")
         
         return "\n".join(output)

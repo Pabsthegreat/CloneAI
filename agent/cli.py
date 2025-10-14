@@ -1,11 +1,21 @@
-import re
 import os
+import re
 import typer
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from agent.state import log_command, get_history, search_history, format_history_list, get_logger
 from agent.system_info import print_system_info
+from agent.workflows import (
+    WorkflowExecutionError,
+    WorkflowNotFoundError,
+    WorkflowValidationError,
+    load_builtin_workflows,
+    registry as workflow_registry,
+)
 
 app = typer.Typer(help="Your personal CLI agent", no_args_is_help=True)
+
+# Ensure built-in workflows are registered before commands execute.
+load_builtin_workflows()
 
 @app.callback()
 def show_system_info(ctx: typer.Context):
@@ -131,8 +141,62 @@ def do(action: str = typer.Argument(..., help="Action to perform")):
     typer.echo(result)
     
 
-def execute_single_command(action: str) -> str:
+def execute_single_command(action: str, *, extras: Optional[Dict[str, Any]] = None) -> str:
     """Execute a single command and return result."""
+
+    if extras is None:
+        registry_extras: Dict[str, Any] = {}
+    else:
+        registry_extras = extras
+    if "logger" not in registry_extras:
+        registry_extras["logger"] = get_logger()
+    try:
+        workflow_result = workflow_registry.execute(action, extras=registry_extras)
+        output = workflow_result.output
+        if not isinstance(output, str):
+            output = str(output)
+
+        metadata = {
+            "workflow": registry_extras.get(
+                "workflow", workflow_result.spec.command_key()
+            ),
+            "namespace": workflow_result.spec.namespace,
+            "arguments": workflow_result.arguments,
+            "source": "workflow_registry",
+        }
+        parameters_meta = registry_extras.get("parameters")
+        if parameters_meta:
+            metadata["parameters"] = parameters_meta
+
+        if workflow_result.spec.metadata:
+            metadata["workflow_metadata"] = dict(workflow_result.spec.metadata)
+
+        log_command(
+            command=f"do {action}",
+            output=output,
+            command_type=workflow_result.spec.namespace,
+            metadata=metadata,
+        )
+        return output
+    except WorkflowNotFoundError:
+        pass
+    except (WorkflowValidationError, WorkflowExecutionError) as workflow_error:
+        header = action.strip().split(" ", 1)[0] if action else ""
+        namespace, _, _ = header.partition(":")
+        error_metadata = {
+            "workflow": header if ":" in header else None,
+            "error": True,
+            "detail": str(workflow_error),
+            "source": "workflow_registry",
+        }
+        command_type = namespace or "workflow"
+        log_command(
+            command=f"do {action}",
+            output=f"❌ {workflow_error}",
+            command_type=command_type,
+            metadata=error_metadata,
+        )
+        return f"❌ {workflow_error}"
     
     # Parse mail:list commands
     if action.startswith("mail:list"):
@@ -493,13 +557,14 @@ def execute_single_command(action: str) -> str:
         
         # Extract parameters using regex
         to_match = re.search(r'to:([^\s]+)', action, re.IGNORECASE)
-        subject_match = re.search(r'subject:([^:]+?)(?:\s+(?:body|cc|bcc):|$)', action, re.IGNORECASE)
-        body_match = re.search(r'body:(.+?)(?:\s+(?:cc|bcc):|$)', action, re.IGNORECASE)
+        subject_match = re.search(r'subject:([^:]+?)(?:\s+(?:body|cc|bcc|attachment|attachments):|$)', action, re.IGNORECASE)
+        body_match = re.search(r'body:(.+?)(?:\s+(?:cc|bcc|attachment|attachments):|$)', action, re.IGNORECASE)
         cc_match = re.search(r'cc:([^\s]+)', action, re.IGNORECASE)
         bcc_match = re.search(r'bcc:([^\s]+)', action, re.IGNORECASE)
+        attachment_match = re.search(r'(?:attachment|attachments):(.+?)(?:\s+(?:cc|bcc):|$)', action, re.IGNORECASE)
         
-        if not to_match or not subject_match or not body_match:
-            error_msg = "❌ Draft requires: to:email subject:text body:text\nExample: clai do \"mail:draft to:user@test.com subject:Hello body:Hi there\""
+        if not to_match or not subject_match:
+            error_msg = "❌ Draft requires at least: to:email subject:text\nExample: clai do \"mail:draft to:user@test.com subject:Hello body:Hi there\"\nWith attachment: clai do \"mail:draft to:user@test.com subject:Doc attachment:file.pdf\""
             log_command(
                 command=f"do {action}",
                 output=error_msg,
@@ -508,20 +573,63 @@ def execute_single_command(action: str) -> str:
             )
             return error_msg
         
+        # Parse attachments (comma-separated paths or single path)
+        attachments = None
+        if attachment_match:
+            attachments = [path.strip() for path in attachment_match.group(1).split(',')]
+        
+        # If body is missing, use LLM to generate it
+        body_text = None
+        if body_match:
+            body_text = body_match.group(1).strip()
+        else:
+            # Generate body using LLM
+            try:
+                from agent.tools.nl_parser import generate_email_content
+                typer.echo("")
+                typer.secho("🤖 No body provided. Generating email content with AI...", fg=typer.colors.CYAN)
+                
+                # Create instruction from subject and recipient, mention attachments if present
+                if attachments:
+                    attachment_names = ", ".join([att.split('/')[-1] for att in attachments])
+                    instruction = f"write email to {to_match.group(1)} about {subject_match.group(1).strip()}. Mention that attachments ({attachment_names}) are included."
+                else:
+                    instruction = f"write email to {to_match.group(1)} about {subject_match.group(1).strip()}"
+                
+                generated = generate_email_content(instruction)
+                if generated.get("success"):
+                    body_text = generated["body"]
+                    typer.echo("")
+                    typer.secho("✅ Generated email body:", fg=typer.colors.GREEN)
+                    typer.echo(body_text[:200] + "..." if len(body_text) > 200 else body_text)
+                    typer.echo("")
+                else:
+                    error_msg = "❌ Failed to generate email body. Please provide body manually."
+                    return error_msg
+            except Exception as e:
+                error_msg = f"❌ Error generating email body: {str(e)}"
+                return error_msg
+        
         try:
             result = create_draft_email(
                 to=to_match.group(1),
                 subject=subject_match.group(1).strip(),
-                body=body_match.group(1).strip(),
+                body=body_text,
                 cc=cc_match.group(1) if cc_match else None,
-                bcc=bcc_match.group(1) if bcc_match else None
+                bcc=bcc_match.group(1) if bcc_match else None,
+                attachments=attachments
             )
             
             log_command(
                 command=f"do {action}",
                 output=result,
                 command_type="mail",
-                metadata={"to": to_match.group(1), "action": "draft"}
+                metadata={
+                    "to": to_match.group(1),
+                    "action": "draft",
+                    "llm_generated": not body_match,
+                    "attachments": len(attachments) if attachments else 0
+                }
             )
             return result
         except Exception as e:
@@ -564,9 +672,132 @@ def execute_single_command(action: str) -> str:
                 metadata={"action": "list_drafts", "error": True}
             )
     
+    # Parse mail:reply command (reply to an email)
+    elif action.startswith("mail:reply"):
+        from agent.tools.mail import GmailClient, create_draft_email
+        from agent.tools.nl_parser import generate_email_content
+        
+        # Extract parameters
+        id_match = re.search(r'id:([^\s]+)', action, re.IGNORECASE)
+        body_match = re.search(r'body:(.+?)(?:\s+(?:cc|bcc):|$)', action, re.IGNORECASE)
+        
+        if not id_match:
+            error_msg = "❌ mail:reply requires: id:MESSAGE_ID [body:TEXT]\nExample: clai do \"mail:reply id:199abc123\"\nNote: If body is omitted, AI will generate a professional reply"
+            log_command(
+                command=f"do {action}",
+                output=error_msg,
+                command_type="mail",
+                metadata={"action": "reply", "error": True}
+            )
+            return error_msg
+        
+        message_id = id_match.group(1)
+        
+        try:
+            # Get the original email
+            typer.echo(f"\n📧 Fetching original email (ID: {message_id})...")
+            client = GmailClient()
+            original_email = client.get_full_message(message_id)
+            
+            if not original_email:
+                error_msg = f"❌ Email not found: {message_id}"
+                return error_msg
+            
+            # Extract original sender and subject
+            original_from = original_email.get('from', '')
+            original_subject = original_email.get('subject', '')
+            original_body = original_email.get('body', '')
+            
+            # Create reply subject (add "Re:" if not present)
+            reply_subject = original_subject if original_subject.startswith('Re:') else f"Re: {original_subject}"
+            
+            # Generate or use provided body
+            if body_match:
+                reply_body = body_match.group(1).strip()
+            else:
+                # Use AI to generate reply
+                typer.echo("")
+                typer.secho("🤖 Generating professional reply with AI...", fg=typer.colors.CYAN)
+                typer.echo(f"   Original from: {original_from}")
+                typer.echo(f"   Original subject: {original_subject}")
+                typer.echo("")
+                
+                instruction = f"write a professional reply to email from {original_from} with subject '{original_subject}'. Original message: {original_body[:500]}"
+                
+                generated = generate_email_content(instruction, user_context=f"This is a reply to: {original_body[:200]}")
+                if generated.get("success"):
+                    reply_body = generated["body"]
+                    typer.secho("✅ Generated reply:", fg=typer.colors.GREEN)
+                    typer.echo(reply_body[:300] + "..." if len(reply_body) > 300 else reply_body)
+                    typer.echo("")
+                else:
+                    error_msg = "❌ Failed to generate reply. Please provide body manually."
+                    return error_msg
+            
+            # Create draft reply
+            result = create_draft_email(
+                to=original_from,
+                subject=reply_subject,
+                body=reply_body
+            )
+            
+            typer.echo(result)
+            
+            # Extract draft ID from result
+            draft_match = re.search(r"Draft ID:\s*([^\s]+)", result)
+            if draft_match:
+                draft_id = draft_match.group(1)
+                typer.echo("")
+                send_now = typer.confirm("Do you want to send this reply now?", default=True)
+                
+                if send_now:
+                    from agent.tools.mail import GmailClient
+                    typer.echo("")
+                    typer.secho("📤 Sending reply...", fg=typer.colors.MAGENTA)
+                    
+                    try:
+                        client = GmailClient()
+                        sent = client.send_draft(draft_id)
+                        
+                        success_msg = f"\n✅ Reply sent successfully!\n\nMessage ID: {sent['id']}\nDraft ID: {draft_id}"
+                        typer.secho(success_msg, fg=typer.colors.GREEN)
+                        
+                        log_command(
+                            command=f"do {action}",
+                            output=f"{result}\n{success_msg}",
+                            command_type="mail",
+                            metadata={"to": original_from, "action": "reply_sent", "original_id": message_id, "llm_generated": not body_match}
+                        )
+                        return success_msg
+                    except Exception as e:
+                        error_msg = f"❌ Failed to send reply: {str(e)}"
+                        typer.secho(error_msg, fg=typer.colors.RED)
+                        typer.secho(f"\n💡 You can send it later with: clai do \"mail:send draft-id:{draft_id}\"", fg=typer.colors.BLUE)
+                        return error_msg
+                else:
+                    typer.secho(f"✅ Reply draft saved. Send later with: clai do \"mail:send draft-id:{draft_id}\"", fg=typer.colors.GREEN)
+            
+            log_command(
+                command=f"do {action}",
+                output=result,
+                command_type="mail",
+                metadata={"to": original_from, "action": "reply", "original_id": message_id, "llm_generated": not body_match}
+            )
+            return result
+            
+        except Exception as e:
+            error_msg = f"❌ Error creating reply: {str(e)}"
+            log_command(
+                command=f"do {action}",
+                output=error_msg,
+                command_type="mail",
+                metadata={"action": "reply", "error": True}
+            )
+            return error_msg
+    
     # Parse mail:send command (send email directly)
     elif action.startswith("mail:send ") and "draft-id:" not in action:
-        from agent.tools.mail import send_email_now
+        from agent.tools.mail import send_email_now, create_draft_email
         
         # Extract parameters using regex
         to_match = re.search(r'to:([^\s]+)', action, re.IGNORECASE)
@@ -576,8 +807,8 @@ def execute_single_command(action: str) -> str:
         bcc_match = re.search(r'bcc:([^\s]+)', action, re.IGNORECASE)
         attachments_match = re.search(r'attachments:(.+?)(?:\s+(?:cc|bcc):|$)', action, re.IGNORECASE)
         
-        if not to_match or not subject_match or not body_match:
-            error_msg = "❌ Send requires: to:email subject:text body:text"
+        if not to_match or not subject_match:
+            error_msg = "❌ Send requires at least: to:email subject:text"
             typer.secho(error_msg, fg=typer.colors.RED)
             typer.echo("Example: clai do \"mail:send to:user@test.com subject:Hello body:Hi there\"")
             typer.echo("With attachments: clai do \"mail:send to:user@test.com subject:Doc body:See attached attachments:C:\\file.pdf,C:\\image.jpg\"")
@@ -589,28 +820,123 @@ def execute_single_command(action: str) -> str:
             )
             return
         
+        # If body is missing, use LLM to generate it
+        body_text = None
+        llm_generated = False
+        if body_match:
+            body_text = body_match.group(1).strip()
+        else:
+            # Generate body using LLM
+            try:
+                from agent.tools.nl_parser import generate_email_content
+                typer.echo("")
+                typer.secho("🤖 No body provided. Generating email content with AI...", fg=typer.colors.CYAN)
+                
+                # Create instruction from subject and recipient
+                instruction = f"write email to {to_match.group(1)} about {subject_match.group(1).strip()}"
+                
+                generated = generate_email_content(instruction)
+                if generated.get("success"):
+                    body_text = generated["body"]
+                    llm_generated = True
+                    typer.echo("")
+                    typer.secho("✅ Generated email body:", fg=typer.colors.GREEN)
+                    typer.echo(body_text[:200] + "..." if len(body_text) > 200 else body_text)
+                    typer.echo("")
+                else:
+                    error_msg = "❌ Failed to generate email body. Please provide body manually."
+                    return
+            except Exception as e:
+                error_msg = f"❌ Error generating email body: {str(e)}"
+                return
+        
         # Parse attachments (comma-separated paths)
         attachments = None
         if attachments_match:
             attachments = [path.strip() for path in attachments_match.group(1).split(',')]
         
+        # ALWAYS create draft first, then ask to send
         try:
-            result = send_email_now(
+            typer.echo("")
+            typer.secho("📝 Creating draft first...", fg=typer.colors.YELLOW)
+            
+            draft_result = create_draft_email(
                 to=to_match.group(1),
                 subject=subject_match.group(1).strip(),
-                body=body_match.group(1).strip(),
+                body=body_text,
                 cc=cc_match.group(1) if cc_match else None,
-                bcc=bcc_match.group(1) if bcc_match else None,
-                attachments=attachments
+                bcc=bcc_match.group(1) if bcc_match else None
             )
-            typer.echo(result)
+            typer.echo(draft_result)
             
-            log_command(
-                command=f"do {action}",
-                output=result,
-                command_type="mail",
-                metadata={"to": to_match.group(1), "action": "send", "attachments": len(attachments) if attachments else 0}
-            )
+            # Extract draft ID
+            draft_id_match = re.search(r"Draft ID:\s*([^\s]+)", draft_result)
+            
+            # Ask user if they want to send
+            typer.echo("")
+            send_now = typer.confirm("Do you want to send this email now?", default=True)
+            
+            if send_now:
+                if draft_id_match:
+                    # Send the draft
+                    from agent.tools.mail import send_draft_email
+                    typer.secho("📤 Sending email...", fg=typer.colors.GREEN)
+                    send_result = send_draft_email(draft_id=draft_id_match.group(1))
+                    typer.echo(send_result)
+                    
+                    log_command(
+                        command=f"do {action}",
+                        output=f"Draft created and sent: {send_result}",
+                        command_type="mail",
+                        metadata={
+                            "to": to_match.group(1),
+                            "action": "send",
+                            "llm_generated": llm_generated,
+                            "attachments": len(attachments) if attachments else 0,
+                            "sent": True
+                        }
+                    )
+                else:
+                    # Fallback to direct send if draft ID not found
+                    result = send_email_now(
+                        to=to_match.group(1),
+                        subject=subject_match.group(1).strip(),
+                        body=body_text,
+                        cc=cc_match.group(1) if cc_match else None,
+                        bcc=bcc_match.group(1) if bcc_match else None,
+                        attachments=attachments
+                    )
+                    typer.echo(result)
+                    
+                    log_command(
+                        command=f"do {action}",
+                        output=result,
+                        command_type="mail",
+                        metadata={
+                            "to": to_match.group(1),
+                            "action": "send",
+                            "llm_generated": llm_generated,
+                            "attachments": len(attachments) if attachments else 0,
+                            "sent": True
+                        }
+                    )
+            else:
+                typer.secho("✅ Draft saved. You can send it later with: clai do \"mail:send draft-id:{}\"".format(
+                    draft_id_match.group(1) if draft_id_match else "DRAFT_ID"
+                ), fg=typer.colors.GREEN)
+                
+                log_command(
+                    command=f"do {action}",
+                    output=f"Draft created but not sent: {draft_result}",
+                    command_type="mail",
+                    metadata={
+                        "to": to_match.group(1),
+                        "action": "draft_only",
+                        "llm_generated": llm_generated,
+                        "sent": False
+                    }
+                )
+                
         except Exception as e:
             error_msg = f"❌ Error: {str(e)}"
             typer.secho(error_msg, fg=typer.colors.RED)
@@ -898,6 +1224,75 @@ def execute_single_command(action: str) -> str:
             )
             return error_msg
     
+    # Parse doc:merge-pdf command
+    elif action.startswith("doc:merge-pdf"):
+        from PyPDF2 import PdfMerger
+        
+        # Extract parameters
+        files_match = re.search(r'files:(.+?)(?:\s+output:|$)', action, re.IGNORECASE)
+        output_match = re.search(r'output:([^\s]+)', action, re.IGNORECASE)
+        
+        if not files_match or not output_match:
+            error_msg = "❌ doc:merge-pdf requires: files:FILE1,FILE2,... output:OUTPUT_FILE\nExample: clai do \"doc:merge-pdf files:file1.pdf,file2.pdf output:merged.pdf\""
+            log_command(
+                command=f"do {action}",
+                output=error_msg,
+                command_type="document",
+                metadata={"action": "merge_pdf", "error": True}
+            )
+            return error_msg
+        
+        # Parse file list (can be relative or absolute paths)
+        input_files = [f.strip() for f in files_match.group(1).split(',')]
+        output_file = output_match.group(1).strip()
+        
+        try:
+            typer.echo(f"\n📄 Merging {len(input_files)} PDF file(s)...")
+            for i, f in enumerate(input_files, 1):
+                # Check if file exists
+                if not os.path.exists(f):
+                    raise FileNotFoundError(f"File not found: {f}")
+                typer.echo(f"   {i}. {f}")
+            typer.echo(f"\n📤 Output: {output_file}")
+            typer.echo("")
+            
+            # Merge PDFs directly
+            merger = PdfMerger()
+            for pdf_file in input_files:
+                merger.append(pdf_file)
+            
+            merger.write(output_file)
+            merger.close()
+            
+            success_msg = f"\n✅ Successfully merged {len(input_files)} PDF files!\n📁 Output saved to: {output_file}"
+            typer.secho(success_msg, fg=typer.colors.GREEN)
+            
+            log_command(
+                command=f"do {action}",
+                output=success_msg,
+                command_type="document",
+                metadata={"action": "merge_pdf", "input_count": len(input_files), "output": output_file}
+            )
+            return success_msg
+        except FileNotFoundError as e:
+            error_msg = f"❌ {str(e)}"
+            log_command(
+                command=f"do {action}",
+                output=error_msg,
+                command_type="document",
+                metadata={"action": "merge_pdf", "error": True}
+            )
+            return error_msg
+        except Exception as e:
+            error_msg = f"❌ Error merging PDFs: {str(e)}"
+            log_command(
+                command=f"do {action}",
+                output=error_msg,
+                command_type="document",
+                metadata={"action": "merge_pdf", "error": True}
+            )
+            return error_msg
+    
     else:
         error_msg = f"❌ Unknown action: {action}"
         help_text = """
@@ -907,7 +1302,8 @@ Supported actions:
     - mail:view id:MESSAGE_ID
     - mail:download id:MESSAGE_ID [dir:PATH]
     - mail:drafts [last N]
-    - mail:draft to:EMAIL subject:TEXT body:TEXT
+    - mail:draft to:EMAIL subject:TEXT body:TEXT [attachment:PATH]
+    - mail:reply id:MESSAGE_ID [body:TEXT]
     - mail:send to:EMAIL subject:TEXT body:TEXT [attachments:PATH1,PATH2]
     
   📧 Email - Meetings:
@@ -924,6 +1320,9 @@ Supported actions:
   📅 Calendar:
     - calendar:create title:TEXT start:DATETIME [duration:MINUTES]
     - calendar:list [next N]
+    
+  📄 Documents:
+    - doc:merge-pdf files:FILE1,FILE2,... output:OUTPUT_FILE
     
   ⏰ Scheduler:
     - tasks
@@ -1238,253 +1637,116 @@ def auto(
         typer.secho("🚀 Executing workflow...", fg=typer.colors.GREEN, bold=True)
         typer.echo("")
         
-        # Check if this is a "check emails and reply" workflow
-        is_reply_workflow = any("reply" in step["description"].lower() or "draft" in step["description"].lower() 
-                                for step in steps)
-        
-        if is_reply_workflow:
-            # Handle the full email reply workflow
-            typer.secho("🤖 Automated Email Reply Workflow", fg=typer.colors.MAGENTA, bold=True)
-            typer.echo("")
-            
-            # Step 1: Fetch emails
-            typer.secho("📧 Step 1: Fetching emails...", fg=typer.colors.CYAN)
-            
-            # Parse first step to get count and sender filter
-            first_step = steps[0]
-            parts = first_step["command"].split()
-            count = 3  # default
-            sender = None
-            
-            # Look for sender email in command (after "from")
-            for i, part in enumerate(parts):
-                if part.isdigit():
-                    count = int(part)
-                elif part.lower() == "from" and i + 1 < len(parts):
-                    sender = parts[i + 1]
-            
-            from agent.tools.mail import GmailClient
-            client = GmailClient()
-            # Fetch emails - if sender specified, filter by "from:sender" (emails received FROM that address)
-            messages = client.list_messages(max_results=count, sender=sender)
-            
-            if not messages:
-                typer.secho(f"   No emails found", fg=typer.colors.YELLOW)
-                return
-            
-            typer.secho(f"   ✓ Found {len(messages)} email(s)", fg=typer.colors.GREEN)
-            typer.echo("")
-            
-            # Step 2: Generate drafts for each email
-            typer.secho("✍️  Step 2: Generating professional replies...", fg=typer.colors.CYAN)
-            drafts = []
-            
-            from agent.tools.mail import get_full_email
-            from agent.tools.nl_parser import generate_email_content
-            
-            for idx, msg in enumerate(messages, 1):
-                msg_id = msg['id']
-                subject = msg['subject']
-                sender_email = msg['from']
-                
-                # Extract just email address from "Name <email>" format
-                import re
-                email_match = re.search(r'<(.+?)>', sender_email)
-                reply_to = email_match.group(1) if email_match else sender_email
-                
-                typer.echo(f"   [{idx}/{len(messages)}] Processing: {subject[:50]}...")
-                
-                # Fetch full email content
-                full_email = get_full_email(msg_id)
-                
-                # Generate reply using LLM
-                prompt = f"Generate a professional reply to this email:\n\nOriginal Email:\n{full_email}\n\nWrite a polite and professional response."
-                
-                result = generate_email_content(prompt)
-                
-                if result["success"]:
-                    reply_subject = result["subject"]
-                    reply_body = result["body"]
-                    
-                    # Create draft
-                    draft_result = client.create_draft(
-                        to=reply_to,
-                        subject=f"Re: {subject}",
-                        body=reply_body
-                    )
-                    
-                    draft_id = draft_result['id']
-                    drafts.append({
-                        'id': draft_id,
-                        'number': idx,
-                        'to': reply_to,
-                        'subject': f"Re: {subject}",
-                        'body': reply_body,
-                        'original_subject': subject
-                    })
-                    
-                    typer.secho(f"      ✓ Draft created", fg=typer.colors.GREEN)
-                else:
-                    typer.secho(f"      ⚠️  Failed to generate reply: {result.get('error', 'Unknown error')}", fg=typer.colors.YELLOW)
-            
-            if not drafts:
-                typer.secho("\n❌ No drafts were created", fg=typer.colors.RED)
-                return
-            
-            # Step 3: Show all drafts and get approval
-            typer.echo("")
-            typer.secho("=" * 80, fg=typer.colors.BLUE)
-            typer.secho("📝 GENERATED DRAFTS - REVIEW & APPROVE", fg=typer.colors.YELLOW, bold=True)
-            typer.secho("=" * 80, fg=typer.colors.BLUE)
-            typer.echo("")
-            
-            for draft in drafts:
-                typer.secho(f"[Draft #{draft['number']}]", fg=typer.colors.CYAN, bold=True)
-                typer.echo(f"To: {draft['to']}")
-                typer.echo(f"Subject: {draft['subject']}")
-                typer.echo(f"Original: {draft['original_subject'][:60]}...")
-                typer.echo("")
-                typer.echo("Body:")
-                typer.echo(draft['body'])
-                typer.echo("")
-                typer.secho("-" * 80, fg=typer.colors.BLUE)
-                typer.echo("")
-            
-            # Get approval
-            typer.secho("📮 Ready to send drafts!", fg=typer.colors.GREEN, bold=True)
-            typer.echo("")
-            typer.echo("Options:")
-            typer.echo("  • Type 'all' to send all drafts")
-            typer.echo("  • Type specific numbers (e.g., '1,3' or '1 3' or '2')")
-            typer.echo("  • Press Enter to cancel")
-            typer.echo("")
-            
-            approval = typer.prompt("Which drafts to send?", default="", show_default=False)
-            
-            if not approval or approval.strip() == "":
-                typer.secho("\n❌ Cancelled - No drafts sent", fg=typer.colors.YELLOW)
-                typer.echo(f"💡 Drafts are saved in Gmail. Use 'clai do mail:list-drafts' to view them.")
-                return
-            
-            # Parse approval
-            to_send = []
-            approval = approval.strip().lower()
-            
-            if approval == "all":
-                to_send = list(range(1, len(drafts) + 1))
-            else:
-                # Parse comma or space separated numbers
-                numbers_str = approval.replace(',', ' ')
-                try:
-                    to_send = [int(n) for n in numbers_str.split() if n.isdigit()]
-                except ValueError:
-                    typer.secho("\n❌ Invalid input. Cancelled.", fg=typer.colors.RED)
-                    return
-            
-            # Send approved drafts
-            typer.echo("")
-            typer.secho("📤 Sending approved drafts...", fg=typer.colors.GREEN, bold=True)
-            typer.echo("")
-            
-            from agent.tools.mail import send_draft_email
-            
-            sent_count = 0
-            for num in to_send:
-                if 1 <= num <= len(drafts):
-                    draft = drafts[num - 1]
-                    typer.echo(f"   [{num}/{len(to_send)}] Sending to {draft['to']}...")
-                    
-                    result = send_draft_email(draft['id'])
-                    if "successfully" in result.lower():
-                        typer.secho(f"      ✓ Sent!", fg=typer.colors.GREEN)
-                        sent_count += 1
-                    else:
-                        typer.secho(f"      ⚠️  Failed: {result}", fg=typer.colors.YELLOW)
-                else:
-                    typer.secho(f"   ⚠️  Invalid draft number: {num}", fg=typer.colors.YELLOW)
-            
-            typer.echo("")
-            typer.secho(f"✅ Workflow Complete! Sent {sent_count}/{len(to_send)} emails", fg=typer.colors.GREEN, bold=True)
-            return
-        
-        # Standard workflow execution for non-reply workflows
-        context = {}  # Store context between steps
-        
+        workflow_outputs = []
+        auto_context: Dict[str, List[str]] = {}
+        instruction_lower = instruction.lower()
+
+        def resolve_placeholders(raw_command: str) -> str:
+            resolved = raw_command
+            message_ids = auto_context.get("mail:last_message_ids")
+            if message_ids:
+                resolved = resolved.replace("MESSAGE_ID", message_ids[0], 1)
+            draft_ids = auto_context.get("mail:last_draft_ids")
+            if draft_ids:
+                resolved = resolved.replace("DRAFT_ID", draft_ids[0], 1)
+            return resolved
+
         for i, step in enumerate(steps, 1):
-            command = step["command"]
-            description = step["description"]
-            needs_approval = step["needs_approval"]
-            
+            command = step.get("command", "").strip()
+            description = step.get("description", "").strip() or command
+            needs_approval = bool(step.get("needs_approval"))
+
             typer.secho(f"▶ Step {i}/{len(steps)}: {description}", fg=typer.colors.CYAN, bold=True)
-            typer.echo(f"   Executing: {command}")
-            typer.echo("")
-            
-            # Parse command into parts
-            parts = command.split()
-            if len(parts) < 2:
-                typer.secho(f"   ⚠️  Invalid command format: {command}", fg=typer.colors.YELLOW)
+            if not command:
+                typer.secho("   ⚠️  Missing command for this step; skipping.", fg=typer.colors.YELLOW)
+                typer.echo("")
                 continue
-            
-            action = parts[0]
-            subcommand = parts[1] if len(parts) > 1 else None
-            args = parts[2:] if len(parts) > 2 else []
-            
-            # Handle different command types
-            if action == "mail:list":
-                # Extract count from "last N" or just N
-                count = 10  # default
-                sender = None
-                
-                # Parse arguments
-                if "last" in args:
-                    last_idx = args.index("last")
-                    if last_idx + 1 < len(args):
-                        try:
-                            count = int(args[last_idx + 1])
-                        except ValueError:
-                            pass
-                elif args and args[0].isdigit():
-                    count = int(args[0])
-                
-                # Check for "from" sender filter
-                if "from" in args:
-                    from_idx = args.index("from")
-                    if from_idx + 1 < len(args):
-                        sender = args[from_idx + 1]
-                
-                from agent.tools.mail import list_emails
-                result = list_emails(count=count, sender=sender)
-                typer.echo(result)
-                context["last_list_result"] = result  # Store for potential replies
-            
-            elif action == "mail:invite":
-                typer.secho("   ⚠️  Meeting invites require interactive input", fg=typer.colors.YELLOW)
-                typer.echo("   Use 'clai do mail:invite' for full functionality")
-            
-            elif action == "calendar:create":
-                typer.secho("   ⚠️  Calendar events require interactive input", fg=typer.colors.YELLOW)
-                typer.echo("   Use 'clai do calendar:create' for full functionality")
-            
-            else:
-                typer.secho(f"   ⚠️  Command type '{action}' not yet supported in auto mode", fg=typer.colors.YELLOW)
-                typer.echo(f"   Run manually: clai interpret \"{command}\"")
-            
-            # Ask for approval for sensitive operations
+
+            command_to_run = resolve_placeholders(command)
+            if "MESSAGE_ID" in command_to_run or "DRAFT_ID" in command_to_run:
+                typer.secho(
+                    "   ⚠️  Placeholder in command could not be resolved; skipping.",
+                    fg=typer.colors.YELLOW,
+                )
+                typer.echo("")
+                continue
+
+            typer.echo(f"   Executing: {command_to_run}")
+
             if needs_approval and not run:
                 typer.echo("")
-                continue_workflow = typer.confirm(f"Continue to step {i + 1}?", default=True)
-                if not continue_workflow:
-                    typer.secho(f"\n⚠️  Workflow stopped at step {i}", fg=typer.colors.YELLOW)
-                    return
-            
+                proceed = typer.confirm(f"Execute this step now?", default=True)
+                if not proceed:
+                    typer.secho("   ⚠️  Step skipped by user.", fg=typer.colors.YELLOW)
+                    typer.echo("")
+                    continue
+
+            step_extras: Dict[str, Any] = {}
+            try:
+                result = execute_single_command(command_to_run, extras=step_extras)
+            except Exception as exc:  # pragma: no cover - defensive
+                typer.secho(f"   ❌ Error executing command: {exc}", fg=typer.colors.RED)
+                workflow_outputs.append(f"{command_to_run}\nERROR: {exc}")
+                typer.echo("")
+                continue
+
+            # Update context from workflow extras
+            if "mail:last_message_ids" in step_extras:
+                auto_context["mail:last_message_ids"] = step_extras["mail:last_message_ids"]
+            if "mail:last_messages" in step_extras:
+                auto_context["mail:last_messages"] = step_extras["mail:last_messages"]
+
+            workflow_outputs.append(f"{command_to_run}\n{result}")
+            if result:
+                typer.echo("")
+                typer.echo(result)
             typer.echo("")
-        
+
+            # Extract draft IDs from output when available
+            if command_to_run.startswith("mail:draft") or (command_to_run.startswith("mail:send") and "draft-id:" not in command_to_run):
+                draft_match = re.search(r"Draft ID:\s*([^\s]+)", result or "")
+                if draft_match:
+                    draft_id = draft_match.group(1)
+                    auto_context["mail:last_draft_ids"] = [draft_id]
+
+                    # ALWAYS ask if user wants to send the draft, regardless of instruction wording
+                    typer.echo("")
+                    send_now = typer.confirm("Do you want to send this draft now?", default=True)
+                    if send_now:
+                        send_command = f"mail:send draft-id:{draft_id}"
+                        typer.echo(f"   Executing: {send_command}")
+                        send_extras: Dict[str, Any] = {}
+                        try:
+                            send_result = execute_single_command(send_command, extras=send_extras)
+                            workflow_outputs.append(f"{send_command}\n{send_result}")
+                            typer.echo(send_result)
+                            auto_context["mail:last_sent_draft_id"] = [draft_id]
+                        except Exception as send_exc:  # pragma: no cover
+                            typer.secho(f"   ❌ Failed to send draft: {send_exc}", fg=typer.colors.RED)
+                            workflow_outputs.append(f"{send_command}\nERROR: {send_exc}")
+                        typer.echo("")
+                    else:
+                        typer.secho(f"   ✅ Draft saved. Send later with: clai do \"mail:send draft-id:{draft_id}\"", fg=typer.colors.GREEN)
+                        typer.echo("")
+
         typer.secho("✅ Workflow completed!", fg=typer.colors.GREEN, bold=True)
         typer.echo("")
         typer.secho("💡 Tip: For full interactive control, use individual commands:", fg=typer.colors.BLUE)
         typer.echo("   • clai interpret \"your instruction\"")
         typer.echo("   • clai draft-email \"your message\"")
-        typer.echo("   • clai do mail:reply <message-id>")
+        typer.echo("   • clai do <command>")
+        typer.echo("")
+
+        log_command(
+            command=f"auto {instruction}",
+            output="\n\n".join(workflow_outputs),
+            command_type="auto",
+            metadata={
+                "steps": steps,
+                "run_flag": run,
+                "reasoning": reasoning,
+            },
+        )
         
     except ImportError as e:
         typer.secho(f"❌ Import error: {str(e)}", fg=typer.colors.RED)

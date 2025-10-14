@@ -1,0 +1,3 @@
+# System Architecture
+
+Full ARCHITECTURE.md content here...
