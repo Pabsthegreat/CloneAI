@@ -23,7 +23,6 @@ def refresh_command_reference() -> str:
     COMMAND_REFERENCE = build_command_reference()
     return COMMAND_REFERENCE
 
-
 def get_user_context() -> str:
     """
     Build user context information for the LLM.
@@ -74,7 +73,6 @@ USER PERSONALIZATION:
     
     return context
 
-
 def call_ollama(prompt: str, model: str = "qwen3:4b-instruct") -> Optional[str]:
     """
     Call Ollama API to get LLM response.
@@ -116,6 +114,39 @@ def call_ollama(prompt: str, model: str = "qwen3:4b-instruct") -> Optional[str]:
         print(f"❌ Error calling Ollama: {str(e)}")
         return None
 
+def get_command_suggestions(user_input: str) -> List[str]:
+    """
+    Get command suggestions based on partial user input.
+    
+    Args:
+        user_input: Partial user input
+        
+    Returns:
+        List of suggested commands
+    """
+    suggestions = []
+    lower_input = user_input.lower()
+    
+    # Email suggestions
+    if any(word in lower_input for word in ["email", "mail", "inbox", "message"]):
+        suggestions.extend([
+            "mail:list last 10",
+            "mail:list from user@example.com",
+            "mail:priority"
+        ])
+    
+    # Calendar suggestions
+    if any(word in lower_input for word in ["calendar", "meeting", "event", "schedule"]):
+        suggestions.extend([
+            "calendar:list next 5",
+            "calendar:create title:Meeting start:2025-10-15T14:00:00 duration:60"
+        ])
+    
+    # Download suggestions
+    if any(word in lower_input for word in ["download", "attachment"]):
+        suggestions.append("mail:download id:MESSAGE_ID")
+    
+    return suggestions[:5]  # Return top 5 suggestions
 
 def parse_natural_language(user_input: str, model: str = "qwen3:4b-instruct") -> Dict[str, any]:
     """
@@ -134,8 +165,8 @@ def parse_natural_language(user_input: str, model: str = "qwen3:4b-instruct") ->
     """
     
     user_context = get_user_context()
-    
-    prompt = f"""You are a command parser for CloneAI, a CLI tool. Convert the user's natural language request into the exact CloneAI command syntax.
+
+    prompt = f"""You are an instruction generator, who converts natural language requests into exact atomic CloneAI commands.
 
 {user_context}
 
@@ -152,13 +183,13 @@ Analyze the request and respond with ONLY a valid JSON object (no markdown, no e
 
 Rules:
 1. Output ONLY valid JSON, nothing else
-2. Use exact command syntax from the reference
-3. If the request is ambiguous, make reasonable assumptions
+2. Use exact command syntax from the reference.
+3. Create the most specific and simple command possible for each step in workflow.
 4. If you need information (like message ID), mention it in explanation
-5. For dates, use ISO format (YYYY-MM-DDTHH:MM:SS)
-6. For "today" use current date {datetime.date.today()}, "tomorrow" is {datetime.date.today() + datetime.timedelta(days=1)}
+5. For dates, use ISO format and 24hr format for time(YYYY-MM-DDTHH:MM:SS)
+6. Today's date is {datetime.date.today()}.
 7. For subject/title/body text with spaces, keep them as-is (spaces are OK)
-8. Use 24-hour time format (1:30 PM = 13:30, 2:00 PM = 14:00)
+
 
 Respond with JSON only:"""
 
@@ -211,41 +242,6 @@ Respond with JSON only:"""
         }
 
 
-def get_command_suggestions(user_input: str) -> List[str]:
-    """
-    Get command suggestions based on partial user input.
-    
-    Args:
-        user_input: Partial user input
-        
-    Returns:
-        List of suggested commands
-    """
-    suggestions = []
-    lower_input = user_input.lower()
-    
-    # Email suggestions
-    if any(word in lower_input for word in ["email", "mail", "inbox", "message"]):
-        suggestions.extend([
-            "mail:list last 10",
-            "mail:list from user@example.com",
-            "mail:priority"
-        ])
-    
-    # Calendar suggestions
-    if any(word in lower_input for word in ["calendar", "meeting", "event", "schedule"]):
-        suggestions.extend([
-            "calendar:list next 5",
-            "calendar:create title:Meeting start:2025-10-15T14:00:00 duration:60"
-        ])
-    
-    # Download suggestions
-    if any(word in lower_input for word in ["download", "attachment"]):
-        suggestions.append("mail:download id:MESSAGE_ID")
-    
-    return suggestions[:5]  # Return top 5 suggestions
-
-
 def parse_workflow(instruction: str, model: str = "qwen3:4b-instruct") -> Dict[str, any]:
     """
     Parse multi-step workflow instructions into a sequence of CloneAI commands.
@@ -263,8 +259,8 @@ def parse_workflow(instruction: str, model: str = "qwen3:4b-instruct") -> Dict[s
     """
     
     user_context = get_user_context()
-    
-    prompt = f"""You are a workflow parser for CloneAI. Break down multi-step tasks into a sequence of CloneAI commands.
+
+    prompt = f"""You are a workflow parser, instruction generator for CloneAI. Break down multi-step tasks into a sequence of atomic simple CloneAI commands.
 
 {user_context}
 
@@ -272,7 +268,22 @@ def parse_workflow(instruction: str, model: str = "qwen3:4b-instruct") -> Dict[s
 
 User workflow: "{instruction}"
 
-Analyze the workflow and create a step-by-step execution plan. Respond with ONLY valid JSON:
+IMPORTANT: First determine if this is an ACTION or a QUESTION:
+- ACTION: Tasks that require executing commands or following a workflow(send email, schedule meeting, list emails, etc.)
+- QUESTION: General knowledge queries, definitions, information requests (what is X?, who is Y?, define Z)
+
+For QUESTIONS that don't need a workflow and you can handle it answer directly, do not overestimate your capabilities here, if you cannot answer it go for generating a workflow.
+- Return empty steps array: {{"steps": [], "reasoning": "This is a general knowledge question, not a workflow task"}}
+
+For ACTIONS (tasks that require executing commands or following a workflow):
+
+Rules:
+1. ONE atomic action per step - each step executes ONE command.
+2. needs_approval=true for send/delete/modify operations, false for read-only.
+3. ALWAYS check the COMMAND REFERENCE above for available commands before creating steps.
+4. Use the MOST SPECIFIC command available (e.g., mail:summarize for summarization, not mail:view).
+5. For workflows needing data from previous steps, use placeholders like MESSAGE_ID or DRAFT_ID.
+6. Create an atomic step-by-step execution plan. Respond with ONLY valid JSON:
 {{
   "steps": [
     {{
@@ -281,42 +292,21 @@ Analyze the workflow and create a step-by-step execution plan. Respond with ONLY
       "needs_approval": true/false
     }}
   ],
-  "reasoning": "brief explanation of the workflow"
 }}
 
-WORKFLOW RULES:
-1. Break complex tasks into atomic commands
-2. For "check emails and reply", list emails first, then use mail:reply for each
-3. Set needs_approval=true for actions that send/delete/modify data
-4. Set needs_approval=false for read-only operations (list, view, etc.)
-5. **IMPORTANT**: For replying to emails, use "mail:reply id:MESSAGE_ID" (NOT mail:draft)
-   - The mail:reply command automatically handles reply subject (adds "Re:") and context
-   - AI will generate professional reply body automatically
-   - The system will ask user if they want to send the reply
-6. **IMPORTANT**: For sending NEW emails, ALWAYS use "mail:draft" command (NOT "mail:send")
-   - The system will automatically ask user if they want to send the draft
-   - Even if user says "send email", create a draft first
-   - Body is optional in mail:draft - if missing, AI will generate it
-7. If user doesn't provide email body, omit body:text - AI will generate it
+Key workflow patterns:
+- To summarize an email: mail:list → mail:summarize id:MESSAGE_ID
+- To reply to an email: mail:list → mail:reply id:MESSAGE_ID
+- To draft new email: mail:draft (body is optional, AI generates if missing)
+- To view email content: mail:list → mail:view id:MESSAGE_ID
 
-Examples:
-- "send email to john@test.com about meeting" → 
-  Step 1: mail:draft to:john@test.com subject:Meeting Discussion
-  (Note: No body:text needed, AI will generate it)
+IMPORTANT - Distinguish between QUESTIONS and ACTIONS:
+QUESTIONS (return empty steps): General knowledge queries like "what is X?", "who is Y?", "define Z"
+ACTIONS (create workflow steps): Tasks requiring command execution like "send email", "list emails", "summarize email"
 
-- "reply to last email from john@test.com" → 
-  Step 1: mail:list last 5 sender:john@test.com
-  Step 2: mail:reply id:MESSAGE_ID
-  (Note: MESSAGE_ID will be from Step 1 results)
+JSON only:"""
 
-- "check last 5 emails and reply to them" → 
-  Step 1: mail:list last 5
-  Step 2: mail:reply id:MESSAGE_ID (for first email)
-  Step 3: mail:reply id:MESSAGE_ID (for second email)
-  etc.
-
-Respond with JSON only:"""
-
+    print(prompt)
     response = call_ollama(prompt, model)
     
     if not response:

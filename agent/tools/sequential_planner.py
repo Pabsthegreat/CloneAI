@@ -1,124 +1,202 @@
 """
-Sequential workflow planner that generates next steps based on previous outputs.
+Deterministic sequential workflow planner.
+
+Provides lightweight reasoning to decide the next step when workflows include
+placeholder commands (e.g., `mail:view id:MESSAGE_ID`). The planner avoids
+hard-coded prompts by relying on heuristics and configuration data instead of
+prompting a local LLM for every decision.
 """
 
-import json
-import subprocess
-from typing import Dict, List, Optional, Any
+from __future__ import annotations
+
+import re
+from typing import Any, Dict, List, Optional
+
+from agent.config.runtime import REPLY_KEYWORDS, URGENT_KEYWORDS
+
+
+def _unique_preserve_order(values: List[str]) -> List[str]:
+    seen = set()
+    ordered: List[str] = []
+    for value in values:
+        if not value or value in seen:
+            continue
+        ordered.append(value)
+        seen.add(value)
+    return ordered
+
+
+def _extract_ids_from_list_output(output: str) -> List[str]:
+    return re.findall(r"Message ID:\s*([^\s]+)", output or "", flags=re.IGNORECASE)
+
+
+def _collect_available_ids(
+    completed_steps: List[Dict[str, str]],
+    context: Dict[str, Any],
+) -> List[str]:
+    ids: List[str] = []
+    ids.extend(context.get("mail:last_message_ids", []))
+
+    if not ids:
+        for step in completed_steps:
+            if step["command"].startswith("mail:list"):
+                ids.extend(_extract_ids_from_list_output(step.get("output", "")))
+
+    return _unique_preserve_order(ids)
+
+
+def _extract_viewed_ids(completed_steps: List[Dict[str, str]]) -> List[str]:
+    ids: List[str] = []
+    for step in completed_steps:
+        if step["command"].startswith("mail:view"):
+            match = re.search(r"id:([^\s]+)", step["command"], flags=re.IGNORECASE)
+            if match:
+                ids.append(match.group(1))
+    return _unique_preserve_order(ids)
+
+
+def _score_text(text: str) -> int:
+    if not text:
+        return 0
+    lower = text.lower()
+    score = 0
+    for keyword in URGENT_KEYWORDS:
+        if keyword in lower:
+            score += 3
+    if "today" in lower or "tomorrow" in lower:
+        score += 2
+    if re.search(r"\b\d{1,2}(:\d{2})?\b", lower):  # mentions specific time
+        score += 1
+    if "http" in lower or "link" in lower:
+        score += 1
+    return score
+
+
+def _build_email_context(
+    context: Dict[str, Any],
+    completed_steps: List[Dict[str, str]],
+) -> Dict[str, Dict[str, str]]:
+    info: Dict[str, Dict[str, str]] = {}
+    for message in context.get("mail:last_messages", []):
+        message_id = message.get("id")
+        if not message_id:
+            continue
+        info.setdefault(message_id, {})
+        info[message_id]["subject"] = message.get("subject", "")
+        info[message_id]["snippet"] = message.get("snippet", "")
+
+    for step in completed_steps:
+        if step["command"].startswith("mail:view"):
+            match = re.search(r"id:([^\s]+)", step["command"], flags=re.IGNORECASE)
+            if not match:
+                continue
+            message_id = match.group(1)
+            info.setdefault(message_id, {})
+            info[message_id]["body"] = step.get("output", "")
+
+    return info
+
+
+def _pick_most_urgent_email(
+    email_info: Dict[str, Dict[str, str]],
+    fallback_ids: List[str],
+) -> Optional[str]:
+    best_id: Optional[str] = None
+    best_score = 0
+    for message_id in fallback_ids:
+        details = email_info.get(message_id, {})
+        score = (
+            _score_text(details.get("subject", ""))
+            + _score_text(details.get("snippet", ""))
+            + _score_text(details.get("body", ""))
+        )
+        if score > best_score:
+            best_score = score
+            best_id = message_id
+    return best_id if best_score > 0 else (fallback_ids[0] if fallback_ids else None)
+
+
+def _select_reply_target(
+    instruction_lower: str,
+    available_ids: List[str],
+    viewed_ids: List[str],
+) -> Optional[str]:
+    if not available_ids:
+        return None
+
+    if "last" in instruction_lower:
+        return available_ids[-1]
+    if "first" in instruction_lower or "top" in instruction_lower:
+        return available_ids[0]
+    if viewed_ids:
+        return viewed_ids[-1]
+    return available_ids[0]
 
 
 def plan_next_step(
     original_instruction: str,
     completed_steps: List[Dict[str, str]],
     remaining_goal: str,
-    model: str = "qwen3:4b-instruct"
+    *,
+    context: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Given what's been done, decide the next step.
-    
+    Decide the next step for a workflow that contains placeholder commands.
+
     Args:
-        original_instruction: The original user request
-        completed_steps: List of {command, output} dicts for steps already done
-        remaining_goal: What still needs to be accomplished
-        model: Ollama model to use
-        
-    Returns:
-        Dictionary with:
-        - has_next_step: bool, whether there's more to do
-        - command: str, next command to execute (if has_next_step=True)
-        - description: str, what this step does
-        - needs_approval: bool, whether to ask user
-        - reasoning: str, why this step is needed
-        
-        Or None if planning fails
+        original_instruction: The original user instruction.
+        completed_steps: List of executed steps (command + output).
+        remaining_goal: High-level goal from the workflow planner.
+        context: Additional metadata captured during execution (e.g., email IDs).
     """
-    
-    # Build context from completed steps
-    context_lines = []
-    for i, step in enumerate(completed_steps, 1):
-        context_lines.append(f"Step {i}: {step['command']}")
-        # For mail:list, extract only Message IDs
-        if 'mail:list' in step['command']:
-            import re
-            ids = re.findall(r'Message ID: ([a-f0-9]+)', step['output'])
-            context_lines.append(f"IDs: {', '.join(ids)}")
-        else:
-            # For other commands, keep brief
-            context_lines.append(f"Output: {step['output'][:100]}")
-        context_lines.append("")
-    
-    context = "\n".join(context_lines) if context_lines else "No steps completed yet."
-    
-    # Extract already-used IDs to avoid repeating them
-    used_ids = []
-    for step in completed_steps:
-        # Extract mail IDs from commands like "mail:reply id:199e2c327ade5d86"
-        import re
-        id_match = re.search(r'id:([a-f0-9]+)', step['command'])
-        if id_match:
-            used_ids.append(id_match.group(1))
-    
-    used_ids_str = f"\nIMPORTANT: Already processed these IDs (DO NOT reuse): {', '.join(used_ids)}" if used_ids else ""
-    
-    prompt = f"""Next step?
 
-Request: "{original_instruction}"
-Done: {len(completed_steps)} steps
-{context}{used_ids_str}
+    context = context or {}
+    instruction_lower = original_instruction.lower()
 
-Rules:
-- Copy EXACT ID from Step 1 output
-- Use NEXT unused ID
-- Process ALL items
-
-JSON:
-{{"has_next_step": true/false, "command": "mail:reply id:EXACT_ID_FROM_STEP1", "needs_approval": true}}"""
-
-    try:
-        # Use Ollama CLI - significantly faster than HTTP API
-        result = subprocess.run(
-            ['ollama', 'run', model, prompt],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        if result.returncode != 0:
-            return None
-        
-        output = result.stdout.strip()
-        
-        # Debug
-        if not output:
-            print(f"[DEBUG] Empty output from LLM, stderr: {result.stderr[:200]}")
-            return None
-        
-        # Extract JSON
-        json_start = output.find('{')
-        json_end = output.rfind('}') + 1
-        
-        if json_start != -1 and json_end > json_start:
-            json_str = output[json_start:json_end]
-            parsed = json.loads(json_str)
-            
-            # Validate required fields
-            if 'has_next_step' in parsed:
-                if not parsed['has_next_step']:
-                    return {"has_next_step": False}
-                
-                if 'command' in parsed:
-                    return {
-                        "has_next_step": True,
-                        "command": parsed.get('command', ''),
-                        "description": parsed.get('description', ''),
-                        "needs_approval": parsed.get('needs_approval', False),
-                        "reasoning": parsed.get('reasoning', '')
-                    }
-        
-        return None
-        
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
+    available_ids = _collect_available_ids(completed_steps, context)
+    if not available_ids:
         return None
 
+    viewed_ids = _extract_viewed_ids(completed_steps)
+    unviewed_ids = [msg_id for msg_id in available_ids if msg_id not in viewed_ids]
 
-__all__ = ['plan_next_step']
+    if unviewed_ids:
+        next_id = unviewed_ids[0]
+        return {
+            "has_next_step": True,
+            "command": f"mail:view id:{next_id}",
+            "description": "View email content before deciding next action.",
+            "needs_approval": False,
+            "reasoning": "Unviewed emails remain; inspect them before replying.",
+        }
+
+    email_info = _build_email_context(context, completed_steps)
+    wants_urgent = any(keyword in instruction_lower for keyword in URGENT_KEYWORDS)
+    wants_reply = any(keyword in instruction_lower for keyword in REPLY_KEYWORDS)
+
+    if wants_urgent:
+        urgent_id = _pick_most_urgent_email(email_info, available_ids)
+        if urgent_id:
+            return {
+                "has_next_step": True,
+                "command": f"mail:reply id:{urgent_id}",
+                "description": "Reply to the most time-sensitive email.",
+                "needs_approval": True,
+                "reasoning": "All emails reviewed; selected the message with the strongest urgency signals.",
+            }
+
+    if wants_reply:
+        target_id = _select_reply_target(instruction_lower, available_ids, viewed_ids)
+        if target_id:
+            return {
+                "has_next_step": True,
+                "command": f"mail:reply id:{target_id}",
+                "description": "Reply to the selected email.",
+                "needs_approval": True,
+                "reasoning": "All emails reviewed; preparing a reply as requested.",
+            }
+
+    return {"has_next_step": False, "reasoning": remaining_goal}
+
+
+__all__ = ["plan_next_step"]

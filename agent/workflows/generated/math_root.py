@@ -18,6 +18,7 @@ import math
         ),
     ),
     metadata={
+        "category": "MATH COMMANDS",
         "usage": "math:root a:NUMBER",
         "examples": [
             "math:root a:144",

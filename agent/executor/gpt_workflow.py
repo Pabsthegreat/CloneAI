@@ -1,6 +1,5 @@
 """
-Integration with OpenAI responses API for generating new workflow modules.
-Uses the newer responses.create() API with direct text input/output.
+Integration with the OpenAI Responses API for generating new workflow modules.
 """
 
 from __future__ import annotations
@@ -16,6 +15,11 @@ try:
 except Exception:  # pragma: no cover - library may not be installed during tests
     OpenAI = None  # type: ignore
 
+from agent.config.runtime import (
+    REMOTE_GENERATOR_MAX_TOKENS,
+    REMOTE_GENERATOR_MODEL,
+    REMOTE_GENERATOR_TEMPERATURE,
+)
 from agent.executor.workflow_builder import WorkflowRecipe
 
 
@@ -58,18 +62,17 @@ class GPTWorkflowGenerator:
     """Wrapper around the OpenAI responses API to produce new workflow implementations."""
 
     def __init__(
-    self,
-    *,
-    model: str = "gpt-4.1",           # better default for code + structure
-    api_key: Optional[str] = None,
-    temperature: float = 0.1,
-    max_output_tokens: int = 6000,
+        self,
+        *,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
     ):
- 
         self.api_key = api_key or os.getenv("CLAI_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-        self.model = model
-        self.temperature = temperature
-        self.max_output_tokens = max_output_tokens
+        self.model = model or REMOTE_GENERATOR_MODEL
+        self.temperature = temperature if temperature is not None else REMOTE_GENERATOR_TEMPERATURE
+        self.max_output_tokens = max_output_tokens if max_output_tokens is not None else REMOTE_GENERATOR_MAX_TOKENS
 
     def is_configured(self) -> bool:
         """Return True if the OpenAI client can be initialised."""
@@ -189,141 +192,114 @@ class GPTWorkflowGenerator:
         """Construct system/user prompts for the GPT call."""
         command_key = recipe.command_key()
         namespace = recipe.namespace
-        module_placeholder = f"agent/workflows/generated/{namespace}_{recipe.name}.py"
+        module_path = f"agent/workflows/generated/{namespace}_{recipe.name}.py"
 
-        sample_workflows = "\n\n".join(
-            f"# File: {path}\n{textwrap.indent(code.strip(), '    ')}"
-            for path, code in context.sample_workflows.items()
-            if code.strip()
-        )
+        # Take only the FIRST sample workflow (most relevant)
+        sample_workflow = ""
+        if context.sample_workflows:
+            first_path = next(iter(context.sample_workflows))
+            first_code = context.sample_workflows[first_path]
+            # Truncate to ~600 chars for brevity
+            truncated = first_code[:600] + "\n    # ... (truncated)" if len(first_code) > 600 else first_code
+            sample_workflow = f"# Reference: {first_path}\n{textwrap.indent(truncated.strip(), '    ')}"
 
-        tool_summaries = "\n\n".join(
-            f"# Tool: {path}\n{textwrap.indent(code.strip(), '    ')}"
-            for path, code in context.tool_summaries.items()
-            if code.strip()
-        )
+        # Extract only key function signatures from tools (not full implementations)
+        tool_hints = []
+        for path, code in context.tool_summaries.items():
+            # Extract just function definitions (first 300 chars usually contains key signatures)
+            lines = code[:300].split('\n')
+            # Keep lines with 'def ' or class names
+            key_lines = [l.strip() for l in lines if 'def ' in l or 'class ' in l][:3]
+            if key_lines:
+                tool_hints.append(f"{path}: {', '.join(key_lines[:2])}")
+        
+        tool_section = "\n".join(tool_hints[:3])  # Max 3 tools
 
+        # Previous errors (only last 2)
         error_section = ""
         if previous_errors:
-            joined = "\n".join(f"- {err}" for err in previous_errors[-3:])
-            error_section = f"\nPrevious attempt feedback:\n{joined}\n"
+            recent = previous_errors[-2:]
+            error_section = f"\n\nPrevious errors:\n" + "\n".join(f"  - {e}" for e in recent)
 
-        user_prompt = textwrap.dedent(
-            f"""
-            You must implement a new CloneAI workflow command.
+        # Determine category based on namespace
+        category_map = {
+            "mail": "MAIL COMMANDS",
+            "calendar": "CALENDAR COMMANDS",
+            "task": "SCHEDULER COMMANDS",
+            "tasks": "SCHEDULER COMMANDS",
+            "doc": "DOCUMENT COMMANDS",
+            "convert": "DOCUMENT COMMANDS",
+            "merge": "DOCUMENT COMMANDS",
+            "system": "GENERAL COMMANDS",
+            "math": "MATH COMMANDS",
+            "text": "TEXT COMMANDS",
+        }
+        category = category_map.get(namespace, "OTHER COMMANDS")
 
-            Command: {command_key}
-            Namespace: {recipe.namespace}
-            Summary: {recipe.summary}
-            Description: {recipe.description}
+        user_prompt = f"""Generate a CloneAI workflow module.
 
-            Existing workflows (read-only): {', '.join(context.existing_workflows)}
+Command: {command_key}
+Summary: {recipe.summary}
+Description: {recipe.description}
 
-            Project structure (truncated):
-{textwrap.indent(context.project_tree.strip(), '    ')}
+Available tools:
+{tool_section or "  (search agent/tools for helpers)"}
 
-            Workflow registry (excerpt):
-{textwrap.indent(context.registry_source.strip(), '    ')}
+Example workflow:
+{sample_workflow or "  # (no example available)"}
 
-            Sample workflow modules:
-{sample_workflows or '    # No sample workflows available'}
+Output JSON (required):
+{{
+  "module_code": "Full Python code for {module_path}",
+  "notes": ["Implementation notes"],
+  "summary": "One-line summary"
+}}
 
-            Relevant tool modules:
-{tool_summaries or '    # No tool modules provided'}
+Requirements:
+- Use @register_workflow decorator directly on handler function
+- Handler signature: def {namespace}_{recipe.name}_handler(ctx: WorkflowContext, params: Dict[str, Any]) -> str
+- Include metadata with "usage" field showing command syntax
+- Include "category" in metadata for proper grouping (use: "{category}") or if doesn't exist, create it.
+- Use ParameterSpec for arguments with defaults
+- Implement REAL working logic (NO placeholders, TODOs, or "not implemented" messages)
+- Handle errors gracefully with informative messages
+- DO NOT generate tests
 
-            Command reference (abbreviated):
-{textwrap.indent(context.command_reference.strip(), '    ')}
+Correct pattern:
+```python
+from agent.workflows import register_workflow
+from agent.workflows.registry import ParameterSpec, WorkflowContext
+from typing import Dict, Any
 
-            Output JSON schema (mandatory):
-            {{
-              "module_code": "Full Python module content for {module_placeholder}",
-              "notes": ["bullet guidance for humans"],
-              "summary": "One line summary of functionality"
-            }}
+@register_workflow(
+    namespace="{namespace}",
+    name="{recipe.name}",
+    summary="{recipe.summary}",
+    description="{recipe.description}",
+    parameters=(
+        ParameterSpec(name="arg1", description="...", type=str, required=True),
+    ),
+    metadata={{
+        "category": "{category}",
+        "usage": "{command_key} arg1:VALUE",
+        "examples": ["Example: {command_key} arg1:test"],
+    }}
+)
+def {namespace}_{recipe.name}_handler(ctx: WorkflowContext, params: Dict[str, Any]) -> str:
+    arg1 = params.get("arg1")
+    # Real implementation here - use tools from agent.tools
+    return f"Result: {{arg1}}"
+```{error_section}
 
-            NOTE: DO NOT generate tests. Tests are unnecessary and waste tokens.
+Respond with JSON only (no markdown fences)."""
 
-            Requirements:
-            - The module must register the workflow using `@register_workflow` from `agent.workflows`.
-            - Store the module at `{module_placeholder}` (no need to mention this in code).
-            - The handler should accept `(ctx, params)` and return a human-readable string.
-            - Use `ParameterSpec` for arguments with sensible defaults.
-            - Prefer existing helper functions from `agent.tools` when possible; otherwise implement safe helpers within the module.
-            - Include thorough error handling with informative messages.
-            - Keep code concise and follow existing style.
-            - Avoid placeholder text such as TODO; implement working logic or gracefully raise with explanation.
-            - Do not modify existing files; only produce the module code in the JSON response.
-            - ALWAYS include metadata with "usage" showing the command syntax with all required parameters.
-            - The "usage" field helps the natural language parser understand how to construct commands.
-            - DO NOT generate tests - they are unnecessary and waste tokens.
-
-            CRITICAL - CORRECT REGISTRATION PATTERN:
-            The @register_workflow decorator MUST be used directly on the handler function with parameters:
-
-            CORRECT EXAMPLE:
-            ```python
-            from agent.workflows import register_workflow
-            from agent.workflows.registry import ParameterSpec, WorkflowContext
-            from typing import Dict, Any
-
-            @register_workflow(
-                namespace="{namespace}",
-                name="{recipe.name}",
-                summary="{recipe.summary}",
-                description="{recipe.description}",
-                parameters=(
-                    ParameterSpec(
-                        name="param1",
-                        description="Description of param1",
-                        type=str,
-                        required=True,
-                    ),
-                ),
-                metadata={{
-                    "usage": "{namespace}:{recipe.name} param1:VALUE",
-                    "examples": [
-                        "Example: {namespace}:{recipe.name} param1:example_value"
-                    ],
-                }},
-            )
-            def {namespace}_{recipe.name}_handler(ctx: WorkflowContext, params: Dict[str, Any]) -> str:
-                param1 = params.get("param1")
-                # Implementation here
-                return f"Result: {{param1}}"
-            ```
-
-            INCORRECT PATTERNS (DO NOT USE):
-            ❌ @register_workflow without parameters on a function that returns WorkflowSpec
-            ❌ Passing 'handler' as a parameter to @register_workflow
-            ❌ Creating a separate registration function
-            ❌ Calling register_workflow as a regular function
-
-            The decorator pattern shown above is the ONLY correct way. Follow it exactly.
-
-            {error_section}
-
-            Respond with JSON only. No Markdown fences.
-            """
-        ).strip()
-
-        system_prompt = textwrap.dedent(
-            """
-            You are GPT-4.1 acting as a senior Python engineer embedded in the CloneAI project.
-            You generate production-ready workflow modules that integrate with an existing registry.
-            Accuracy, deterministic output, and adherence to the required JSON schema are critical.
-            Avoid extraneous prose; provide only the requested JSON data.
-            """
-        ).strip()
+        system_prompt = """You are a senior Python engineer generating production-ready workflow modules.
+Output must be valid JSON matching the required schema.
+Implement real functionality - no placeholders or TODO comments."""
 
         return [
-            {
-                "role": "system",
-                "content": system_prompt,
-            },
-            {
-                "role": "user",
-                "content": user_prompt,
-            },
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
         ]
 
 

@@ -5,12 +5,12 @@ Dynamic workflow generation pipeline orchestrating GPT-4.1 and local integration
 from __future__ import annotations
 
 import importlib
-import importlib.util
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from agent.config.runtime import REMOTE_GENERATOR_MAX_ATTEMPTS
 from agent.executor.gpt_workflow import (
     GPTWorkflowError,
     GPTWorkflowGenerator,
@@ -140,9 +140,13 @@ class GenerationOutcome:
 class WorkflowGenerationManager:
     """Coordinates remote GPT generation and integration of new workflows."""
 
-    def __init__(self, *, max_remote_calls_per_command: int = 2):
+    def __init__(self, *, max_remote_calls_per_command: Optional[int] = None):
         self.generator = GPTWorkflowGenerator()
-        self.max_remote_calls_per_command = max_remote_calls_per_command
+        self.max_remote_calls_per_command = (
+            max_remote_calls_per_command
+            if max_remote_calls_per_command is not None
+            else REMOTE_GENERATOR_MAX_ATTEMPTS
+        )
         self.attempts: Dict[str, int] = {}
 
     def can_attempt(self, command_key: str) -> bool:

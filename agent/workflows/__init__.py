@@ -17,25 +17,42 @@ from .registry import (
     register_workflow,
     registry,
 )
-from .catalog import LEGACY_SECTIONS, LEGACY_NOTES
+from .catalog import LEGACY_NOTES
 
-_BUILTIN_WORKFLOW_MODULES: Tuple[str, ...] = (
-    "mail",
-)
 _GENERATED_PACKAGE = f"{__name__}.generated"
 
 
 def load_builtin_workflows(modules: Iterable[str] | None = None) -> None:
     """
-    Import built-in workflow modules so they self-register with the registry.
-
+    Automatically discovers and imports all workflow modules in the workflows directory.
+    Each module self-registers its workflows with the registry using @register_workflow decorators.
+    
     Args:
-        modules: Optional iterable of module names relative to this package.
-                 Defaults to the built-in catalog.
+        modules: Optional iterable of module names. If not provided, auto-discovers all .py files.
     """
-    module_names = tuple(modules) if modules is not None else _BUILTIN_WORKFLOW_MODULES
+    if modules is not None:
+        # Explicit module list provided
+        module_names = tuple(modules)
+    else:
+        # Auto-discover all workflow modules in this directory
+        workflows_dir = Path(__file__).parent
+        module_names = []
+        
+        for file_path in workflows_dir.glob("*.py"):
+            # Skip special files
+            if file_path.name.startswith("_") or file_path.stem in ("__init__", "registry", "catalog"):
+                continue
+            module_names.append(file_path.stem)
+    
+    # Import all discovered modules (they self-register via decorators)
     for module_name in module_names:
-        import_module(f"{__name__}.{module_name}")
+        try:
+            import_module(f"{__name__}.{module_name}")
+        except ImportError as e:
+            # Log but don't fail - allow partial loading
+            print(f"Warning: Failed to load workflow module '{module_name}': {e}")
+    
+    # Load generated workflows
     load_generated_workflows()
 
 
@@ -76,14 +93,6 @@ def build_command_reference(include_legacy: bool = True) -> str:
         seen_usage.add(usage.lower())
         line = f"- {usage}           # {info['summary']}"
         sections.setdefault(info["category"], []).append(line)
-
-    if include_legacy:
-        for category, commands in LEGACY_SECTIONS.items():
-            for usage, description in commands:
-                if usage.lower() in seen_usage:
-                    continue
-                line = f"- {usage}           # {description}"
-                sections.setdefault(category, []).append(line)
 
     lines = ["CloneAI Command Reference:", "==========================", ""]
 
