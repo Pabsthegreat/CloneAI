@@ -61,6 +61,7 @@ class WorkflowRecipe:
     safety_constraints: List[str] = field(default_factory=list)
     context_files: List[str] = field(default_factory=list)
     notes: Dict[str, str] = field(default_factory=dict)
+    user_context: Optional[str] = None  # Natural language context from LLM about user's intent
 
     def command_key(self) -> str:
         return f"{self.namespace}:{self.name}"

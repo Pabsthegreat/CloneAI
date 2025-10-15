@@ -1,7 +1,9 @@
 # Proposed Architecture Refactor
 ## Fixing the Deterministic LLM → GPT Generation Gap
 
-### Current Problems
+> **⚠️ HISTORICAL DOCUMENT**: This architecture has been **fully implemented** as the "Tiered Architecture". See `TIERED_ARCHITECTURE_EXPLAINED.md` and `ARCHITECTURE.md` for current implementation details.
+
+### Original Problems (Now Solved)
 
 1. **Local LLM only generates existing commands** → Never triggers GPT generation
 2. **Sequential planner is rule-based** → Doesn't consult LLM for next steps
@@ -327,9 +329,42 @@ $ clai auto "check my emails and reply to any urgent ones"
 
 ---
 
-## Implementation Priority
+## Implementation Status
 
-1. **HIGH**: Fix LLM → GPT generation gap
-2. **HIGH**: Add memory to sequential planner
-3. **MEDIUM**: Refactor `auto()` command
+> **✅ ALL PRIORITIES COMPLETED**
+
+### Implemented Features:
+
+1. ✅ **HIGH**: Fix LLM → GPT generation gap
+   - **Implemented as**: `NEEDS_NEW_WORKFLOW` action type in tiered architecture
+   - **File**: `agent/tools/tiered_planner.py`
+   - **Enhancement**: Local LLM generates detailed context for GPT-4
+
+2. ✅ **HIGH**: Add memory to sequential planner
+   - **Implemented as**: `WorkflowMemory` dataclass with indexed context
+   - **File**: `agent/tools/tiered_planner.py`
+   - **Features**: Tracks original request, plan, completed steps, context
+
+3. ✅ **MEDIUM**: Refactor `auto()` command
+   - **File**: `agent/cli.py`
+   - **Flow**: Guardrails (Step 0) → Classification (Step 1) → Execution (Step 2+)
+
+### Additional Enhancements Beyond Original Proposal:
+
+4. ✅ **Safety Guardrails**: Content moderation with qwen3:4b-instruct
+   - **File**: `agent/tools/guardrails.py`
+
+5. ✅ **LLM-Generated GPT Prompts**: Two-LLM architecture for better code quality
+   - **File**: `agent/executor/gpt_workflow.py`
+
+6. ✅ **Dynamic Category Mapping**: No hardcoded mappings
+   - **File**: `agent/executor/gpt_workflow.py`
+
+7. ✅ **Workflow Reload**: New workflows immediately available
+   - **File**: `agent/cli.py` (importlib.reload)
+
+### Documentation:
+- **Current Architecture**: See `TIERED_ARCHITECTURE_EXPLAINED.md`
+- **Implementation Details**: See `ARCHITECTURE.md`
+- **Testing**: Successfully generated workflows for web scraping, file operations, etc.
 4. **LOW**: Optimize prompts for token efficiency

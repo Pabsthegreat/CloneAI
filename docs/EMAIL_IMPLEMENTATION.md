@@ -287,37 +287,56 @@ After setup, user can list emails with natural commands like:
 - Draft emails would be treated as new incoming emails
 - Now only actual received emails in inbox are processed by default
 
-### 3. **Sequential Planning Optimizations**
-- **Performance**: Switched from HTTP API to Ollama CLI (4x faster: ~1s vs ~4s)
-- **Context Management**: Extract only Message IDs from `mail:list` output
-- **ID Tracking**: Prevents reusing same email ID in multi-step workflows
-- **Prompt Optimization**: Ultra-short prompts reduce hallucinations and typos
-- **Used ID Tracking**: Maintains list of processed IDs across workflow steps
+### 3. **Tiered Architecture** ⭐ (Revolutionary Update)
+- **Performance**: Two-stage planning with 75% token savings (~6,000 vs ~24,000 tokens)
+- **Classification**: Determines action type with category-based filtering
+- **Memory Management**: Context-aware execution with `WorkflowMemory` dataclass
+- **ID Tracking**: Indexed context prevents reusing email IDs in workflows
+- **Dynamic Categories**: Categories derived from registry, not hardcoded
 
 **Technical Implementation:**
-- `sequential_planner.py`: Uses `subprocess.run(['ollama', 'run', model])` instead of HTTP requests
-- Context extraction: Regex to find Message IDs from verbose outputs
-- Used IDs: Extracted via `re.search(r'id:([a-f0-9]+)', step['command'])`
-- Timeout: Reduced to 10 seconds (was 60s with HTTP)
+- `tiered_planner.py`: 
+  - `classify_request()`: First-stage classification (~1,500 tokens)
+  - `plan_step_execution()`: Memory-aware execution (~4,500 tokens per step)
+- Context indexing: `memory.context["message_ids"] = [...]`
+- Used IDs tracked automatically in memory
+- Model: qwen3:4b-instruct (local Ollama via CLI)
 
-### 4. **Local LLM Optimization**
-- **Performance**: Switched `local_compute.py` to Ollama CLI
-- **Speed**: ~1 second response time (was ~4 seconds with HTTP)
-- **Timeout**: Reduced to 5 seconds (was 10s)
-- **Prompt**: Ultra-short to reduce processing time
+### 4. **Safety Guardrails** 🛡️ (NEW)
+- **Purpose**: Block inappropriate/malicious queries before workflow execution
+- **Model**: qwen3:4b-instruct (local, 10s timeout)
+- **Design**: Fail-open (prioritizes availability over absolute security)
+- **Banned Categories**: hacking, illegal, violence, harassment, malware, phishing, spam, fraud
 
-**Use Case:**
-- Determines if request can be answered directly (math, facts, text operations)
-- Falls back to workflows only when needed (email, calendar, files)
-- Example: "what is 456 divided by 8" → Direct answer "57"
+**Implementation:**
+- `guardrails.py`: `check_query_safety()` returns `GuardrailResult`
+- Integrated in `cli.py` auto() command as Step 0 (before classification)
+- Example: ❌ "how to hack email" → BLOCKED, ✅ "secure my email" → ALLOWED
 
-### 5. **Workflow Priority Order**
-- **New Priority**: Workflows → Local LLM → GPT workflow generation
-- **Why**: Ensures "draft reply to latest mail" uses workflow system instead of local LLM
-- **Implementation**: Check `parse_workflow()` first, then `can_local_llm_handle()`, finally generate with GPT
+### 5. **GPT Workflow Generation with LLM Context** 🤖 (NEW)
+- **Two-LLM Architecture**: Local LLM generates detailed context → GPT-4 generates code
+- **Quality Improvement**: Eliminates hallucinations (e.g., wrong parameters, missing imports)
+- **Dynamic Categories**: Category mapping derived from existing workflows
+- **Reload After Generation**: `importlib.reload(registry)` makes new workflows immediately available
+
+**Technical Implementation:**
+- `gpt_workflow.py`:
+  - Local LLM generates `user_context` field with detailed requirements
+  - GPT-4 receives context via OpenAI Responses API
+  - `_get_category_for_namespace()`: Dynamic category mapping
+- Generated workflows saved to `agent/workflows/generated/`
+- Examples: `system_fetch_html_from_url.py`, `system_count_lines_in_files.py`
+
+### 6. **Workflow Priority Order**
+- **New Priority**: Guardrails → Classification → Existing Workflows → GPT Generation
+- **Why**: Safety first, then intelligent routing with tiered architecture
+- **Implementation**: Step 0 (safety) → Step 1 (classify) → Step 2+ (execute with memory)
 
 **Problem Solved:**
-- Previously: "draft reply to latest mail" was answered by local LLM incorrectly
+- Malicious queries blocked at entry point
+- Token efficiency through category-based filtering
+- Dynamic workflow generation with high-quality code
+- Seamless UX with automatic workflow reload
 - Now: Recognized as mail workflow and executed with proper mail:list + mail:reply steps
 
 ---

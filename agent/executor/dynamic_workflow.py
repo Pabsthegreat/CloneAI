@@ -159,8 +159,16 @@ class WorkflowGenerationManager:
         command: str,
         *,
         extras: Optional[Dict[str, Any]] = None,
+        user_context: Optional[str] = None,
     ) -> GenerationOutcome:
-        """Attempt to generate and execute a previously unsupported workflow."""
+        """
+        Attempt to generate and execute a previously unsupported workflow.
+        
+        Args:
+            command: The command to generate (e.g., "task:navigate")
+            extras: Additional context for execution
+            user_context: Natural language description from LLM about user's intent
+        """
         namespace, action, _ = _split_command(command)
         command_key = f"{namespace}:{action}".lower()
 
@@ -180,6 +188,7 @@ class WorkflowGenerationManager:
             description=f"Implements the CLI command `{command}`.",
             complexity="medium",
             notes={"force_tier": "cloud"},
+            user_context=user_context,
         )
 
         context = WorkflowGenerationContext(

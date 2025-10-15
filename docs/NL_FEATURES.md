@@ -425,13 +425,14 @@ The `clai auto` workflow uses an intelligent sequential planner that:
 
 5. **Inbox Filtering**
    - `mail:list` defaults to inbox only (excludes drafts, sent, trash)
-   - Prevents sequential workflows from accidentally processing draft emails
+   - Prevents workflows from accidentally processing draft emails
    - Gmail query: `in:inbox` when no other query specified
 
 **Files:**
-- `agent/tools/sequential_planner.py` - Next step planning with ID tracking
-- `agent/tools/local_compute.py` - Local LLM classification (math, facts)
-- `agent/cli.py` - Workflow priority order implementation
+- `agent/tools/tiered_planner.py` - Tiered architecture with two-stage planning
+- `agent/tools/guardrails.py` - Safety checks for query moderation
+- `agent/executor/gpt_workflow.py` - Dynamic workflow generation with GPT
+- `agent/cli.py` - Command entry point with guardrails integration
 
 ## �📝 Future Enhancements
 

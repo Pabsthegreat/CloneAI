@@ -15,6 +15,7 @@ from agent.config.runtime import (
     LEGACY_COMMAND_PREFIXES,
     SEND_CONFIRMATION_KEYWORDS,
 )
+from agent.tools.local_compute import can_local_llm_handle
 
 app = typer.Typer(help="Your personal CLI agent", no_args_is_help=True)
 
@@ -295,39 +296,86 @@ def auto(
     run: bool = typer.Option(False, "--run", "-r", help="Auto-execute workflow without approval")
 ):
     """
-    Execute multi-step workflows from natural language instructions.
+    Execute multi-step workflows using tiered architecture with memory.
+    
+    Architecture:
+    0. GUARDRAIL: Check query safety (fast, lightweight check)
+    1. PROMPT 1: Classify request → Get categories + planning strategy
+    2. PROMPT 2+: Execute each step with memory → Get specific commands
+    3. GPT Generation: Only called when LLM requests new workflow
     
     Examples:
-        clai auto "check my last 5 emails and reply to them"
-        clai auto "schedule a meeting tomorrow at 2pm and send invites to team@example.com"
-        clai auto --run "check calendar for today and email me a summary"
+        clai auto "check my last 5 emails and reply to urgent ones"
+        clai auto "schedule a meeting tomorrow at 2pm and send invites"
+        clai auto --run "check calendar for today and summarize"
     """
     try:
-        from agent.tools.nl_parser import parse_workflow
-        from agent.tools.local_compute import can_local_llm_handle
+        from agent.tools.tiered_planner import (
+            classify_request,
+            plan_step_execution,
+            WorkflowMemory
+        )
+        from agent.tools.guardrails import check_query_safety, is_model_available
         
-        typer.secho(f"\n🔄 Parsing workflow: '{instruction}'", fg=typer.colors.CYAN, bold=True)
+        typer.secho(f"\n🧠 Analyzing request (Tiered Architecture)...", fg=typer.colors.CYAN, bold=True)
+        typer.echo(f"   Request: '{instruction}'")
+        typer.echo("")
         
-        # PRIORITY 1: Try to map to existing workflows first
-        result = parse_workflow(instruction)
-        
-        if not result["success"] or not result.get("steps"):
-            # PRIORITY 2: Check if local LLM can handle without workflows
-            typer.secho("\n🧠 No workflow found, checking if local LLM can handle...", fg=typer.colors.MAGENTA, dim=True)
-            can_handle, local_result = can_local_llm_handle(instruction)
-            if can_handle and local_result:
+        # ============================================================
+        # GUARDRAIL: Safety Check (Optional - only if model available)
+        # ============================================================
+        if is_model_available("qwen3:4b-instruct"):
+            typer.secho("🛡️  Running safety check...", fg=typer.colors.YELLOW, dim=True)
+            safety_result = check_query_safety(instruction)
+            
+            if not safety_result.is_allowed:
                 typer.echo("")
-                typer.secho("💡 Computed locally (no API calls needed):", fg=typer.colors.GREEN, bold=True)
-                typer.echo(local_result)
+                typer.secho("❌ Query blocked by safety guardrails", fg=typer.colors.RED, bold=True)
+                typer.echo(f"   Category: {safety_result.category}")
+                typer.echo(f"   Reason: {safety_result.reason}")
                 typer.echo("")
+                typer.secho("ℹ️  This system is designed for legitimate productivity and development tasks.", 
+                           fg=typer.colors.BLUE)
                 return
-            else:
-                # PRIORITY 3: Workflow generation would go here (already handled by execute_single_command)
-                typer.secho(f"❌ Failed to parse workflow: {result.get('error', 'Unknown error')}", fg=typer.colors.RED)
-                return
+            typer.secho("   ✓ Safety check passed", fg=typer.colors.GREEN, dim=True)
         
-        steps = result["steps"]
-        reasoning = result.get("reasoning", "")
+        typer.echo("")
+        
+        # ============================================================
+        # PROMPT 1: High-Level Classification
+        # ============================================================
+        typer.secho("📊 Step 1: Classifying request type...", fg=typer.colors.BLUE, dim=True)
+        classification = classify_request(instruction)
+        
+        # Handle local answers (no workflows needed)
+        if classification.can_handle_locally and classification.local_answer:
+            typer.echo("")
+            typer.secho("💡 Computed locally (no workflows needed):", fg=typer.colors.GREEN, bold=True)
+            typer.echo(classification.local_answer)
+            typer.echo("")
+            log_command(
+                command=f"auto {instruction}",
+                output=classification.local_answer,
+                command_type="auto",
+                metadata={"action_type": "local_answer"}
+            )
+            return
+        
+        # Workflow execution required
+        if not classification.steps_plan:
+            typer.secho("❌ Could not create execution plan", fg=typer.colors.RED)
+            return
+        
+        categories_str = ", ".join(classification.categories)
+        typer.echo("")
+        typer.secho("✓ Classification complete:", fg=typer.colors.GREEN)
+        typer.echo(f"  Categories: {categories_str}")
+        typer.echo(f"  Sequential: {'Yes' if classification.needs_sequential else 'No'}")
+        typer.echo(f"  Steps: {len(classification.steps_plan)}")
+        typer.echo(f"  Reasoning: {classification.reasoning}")
+        
+        steps = classification.steps_plan
+        reasoning = classification.reasoning
         
         # PRIORITY 2.5: If single-step workflow and command doesn't exist, try local LLM before GPT generation
         if len(steps) == 1:
@@ -345,26 +393,23 @@ def auto(
         
         # Display workflow plan
         typer.echo("")
-        typer.secho("📋 Workflow Plan:", fg=typer.colors.YELLOW, bold=True)
+        typer.secho("📋 Execution Plan:", fg=typer.colors.YELLOW, bold=True)
         typer.echo(f"   {reasoning}")
         typer.echo("")
         
-        typer.secho(f"   {len(steps)} step(s) identified:", fg=typer.colors.BLUE)
+        typer.secho(f"   {len(steps)} step(s) planned:", fg=typer.colors.BLUE)
         for i, step in enumerate(steps, 1):
-            command = step.get("command", "")
-            description = step.get("description", "")
-            needs_approval = "⚠️  Needs approval" if step.get("needs_approval", False) else "✓ Auto-execute"
-            
-            typer.echo(f"\n   Step {i}: {description}")
-            typer.echo(f"           Command: {command}")
-            typer.echo(f"           {needs_approval}")
+            typer.echo(f"   {i}. {step}")
         
-        # Check if we need sequential re-planning (has placeholders like MESSAGE_ID)
-        has_placeholders = any("MESSAGE_ID" in step.get("command", "") or "DRAFT_ID" in step.get("command", "") 
-                              for step in steps)
-        
-        if has_placeholders:
-            typer.secho("\n💡 Detected dynamic workflow - will plan steps sequentially", fg=typer.colors.BLUE, dim=True)
+        # Initialize memory if sequential planning is needed
+        memory = None
+        if classification.needs_sequential:
+            typer.secho("\n💾 Sequential workflow detected - initializing memory", fg=typer.colors.BLUE, dim=True)
+            memory = WorkflowMemory(
+                original_request=instruction,
+                steps_plan=steps,
+                categories=classification.categories
+            )
         
         # Get approval unless --run flag is set
         if not run:
@@ -374,169 +419,200 @@ def auto(
                 typer.secho("❌ Workflow cancelled by user", fg=typer.colors.YELLOW)
                 return
         
-        # Execute workflow steps
+        # ============================================================
+        # PROMPT 2+: Execute Each Step with Tiered Planning
+        # ============================================================
         typer.echo("")
-        typer.secho("🚀 Executing workflow...", fg=typer.colors.GREEN, bold=True)
+        typer.secho("🚀 Executing workflow (Tiered Architecture)...", fg=typer.colors.GREEN, bold=True)
         typer.echo("")
         
         workflow_outputs = []
         auto_context: Dict[str, List[str]] = {}
-        instruction_lower = instruction.lower()
-        should_offer_send = any(keyword in instruction_lower for keyword in SEND_CONFIRMATION_KEYWORDS)
-        completed_steps = []  # Track for sequential planning
-
-        def resolve_placeholders(raw_command: str) -> str:
-            resolved = raw_command
-            message_ids = auto_context.get("mail:last_message_ids")
-            if message_ids:
-                resolved = resolved.replace("MESSAGE_ID", message_ids[0], 1)
-            draft_ids = auto_context.get("mail:last_draft_ids")
-            if draft_ids:
-                resolved = resolved.replace("DRAFT_ID", draft_ids[0], 1)
-            return resolved
-
-        i = 0
-        while i < len(steps):
-            i += 1
-            step = steps[i - 1]
-            command = step.get("command", "").strip()
-            description = step.get("description", "").strip() or command
-            needs_approval = bool(step.get("needs_approval"))
-
-            typer.secho(f"▶ Step {i}/{len(steps)}: {description}", fg=typer.colors.CYAN, bold=True)
-            if not command:
-                typer.secho("   ⚠️  Missing command for this step; skipping.", fg=typer.colors.YELLOW)
+        
+        for step_index, step_instruction in enumerate(steps, 1):
+            typer.secho(f"\n▶ Step {step_index}/{len(steps)}: {step_instruction}", fg=typer.colors.CYAN, bold=True)
+            typer.secho(f"   Planning execution...", fg=typer.colors.BLUE, dim=True)
+            
+            # PROMPT 2+: Ask LLM how to execute this step
+            execution_plan = plan_step_execution(
+                current_step_instruction=step_instruction,
+                memory=memory,
+                categories=classification.categories
+            )
+            
+            typer.echo(f"   Strategy: {execution_plan.reasoning}")
+            
+            # Handle local answer (LLM computed result directly)
+            if execution_plan.local_answer:
                 typer.echo("")
+                typer.secho("💡 Computed locally:", fg=typer.colors.GREEN)
+                typer.echo(execution_plan.local_answer)
+                
+                if memory:
+                    memory.add_step(step_instruction, "LOCAL_COMPUTATION", execution_plan.local_answer)
+                
+                workflow_outputs.append(f"{step_instruction}\n{execution_plan.local_answer}")
                 continue
-
-            command_to_run = resolve_placeholders(command)
-            if "MESSAGE_ID" in command_to_run or "DRAFT_ID" in command_to_run:
-                typer.secho(
-                    "   ⚠️  Placeholder in command could not be resolved; skipping.",
-                    fg=typer.colors.YELLOW,
-                )
-                typer.echo("")
-                continue
-
-            typer.echo(f"   Executing: {command_to_run}")
-
-            if needs_approval and not run:
-                typer.echo("")
-                proceed = typer.confirm(f"Execute this step now?", default=True)
-                if not proceed:
-                    typer.secho("   ⚠️  Step skipped by user.", fg=typer.colors.YELLOW)
-                    typer.echo("")
+            
+            # Handle new workflow generation request
+            if execution_plan.needs_new_workflow:
+                workflow_req = execution_plan.workflow_request
+                if not workflow_req:
+                    typer.secho("   ⚠️  LLM requested new workflow but didn't provide details", fg=typer.colors.YELLOW)
                     continue
-
+                
+                typer.echo("")
+                typer.secho(f"🤖 Generating new workflow: {workflow_req.get('namespace')}:{workflow_req.get('action')}", 
+                           fg=typer.colors.MAGENTA, bold=True)
+                typer.echo(f"   Description: {workflow_req.get('description')}")
+                
+                # Show LLM's prompt for GPT (helps with debugging)
+                if execution_plan.gpt_prompt:
+                    typer.echo(f"   💡 Context for GPT: {execution_plan.gpt_prompt[:150]}...")
+                
+                # Trigger GPT generation with LLM's natural language prompt
+                from agent.executor.dynamic_workflow import dynamic_manager
+                
+                command_to_generate = f"{workflow_req.get('namespace')}:{workflow_req.get('action')}"
+                generation_result = dynamic_manager.ensure_workflow(
+                    command_to_generate,
+                    user_context=execution_plan.gpt_prompt
+                )
+                
+                if not generation_result.success:
+                    typer.secho(f"   ❌ Workflow generation failed", fg=typer.colors.RED)
+                    if generation_result.errors:
+                        for error in generation_result.errors[-2:]:
+                            typer.echo(f"      • {error}")
+                    continue
+                
+                typer.secho(f"   ✅ Workflow generated successfully!", fg=typer.colors.GREEN)
+                
+                # Reload generated workflows so the new one is available
+                from agent.workflows import load_generated_workflows
+                load_generated_workflows()
+                typer.echo(f"   🔄 Reloading workflows...")
+                
+                # Re-plan this step now that we have the new workflow
+                execution_plan = plan_step_execution(
+                    current_step_instruction=step_instruction,
+                    memory=memory,
+                    categories=classification.categories
+                )
+            
+            # Execute command
+            if not execution_plan.can_execute or not execution_plan.command:
+                typer.secho("   ⚠️  Cannot execute this step", fg=typer.colors.YELLOW)
+                continue
+            
+            command_to_run = execution_plan.command
+            typer.echo(f"   Command: {command_to_run}")
+            
+            # Execute the command
             step_extras: Dict[str, Any] = {}
             try:
                 result = execute_single_command(command_to_run, extras=step_extras)
-            except Exception as exc:  # pragma: no cover - defensive
-                typer.secho(f"   ❌ Error executing command: {exc}", fg=typer.colors.RED)
-                workflow_outputs.append(f"{command_to_run}\nERROR: {exc}")
-                typer.echo("")
+            except Exception as exc:
+                typer.secho(f"   ❌ Error: {exc}", fg=typer.colors.RED)
+                workflow_outputs.append(f"{step_instruction}\n{command_to_run}\nERROR: {exc}")
                 continue
-
+            
             # Update context from workflow extras
             if "mail:last_message_ids" in step_extras:
                 auto_context["mail:last_message_ids"] = step_extras["mail:last_message_ids"]
+                if memory:
+                    memory.context["mail:last_message_ids"] = step_extras["mail:last_message_ids"]
+            
             if "mail:last_messages" in step_extras:
                 auto_context["mail:last_messages"] = step_extras["mail:last_messages"]
-
-            workflow_outputs.append(f"{command_to_run}\n{result}")
+                if memory:
+                    memory.context["mail:last_messages"] = step_extras["mail:last_messages"]
+            
+            # Add to memory
+            if memory:
+                memory.add_step(step_instruction, command_to_run, result or "")
+            
+            workflow_outputs.append(f"{step_instruction}\n{command_to_run}\n{result}")
+            
             if result:
                 typer.echo("")
                 typer.echo(result)
-            typer.echo("")
             
-            # Track completed steps for sequential planning
-            completed_steps.append({"command": command_to_run, "output": result or ""})
-            
-            # SEQUENTIAL RE-PLANNING: Only use for complex multi-step analysis workflows
-            # For simple single-step workflows (like summarize), just resolve placeholders
-            if has_placeholders and i < len(steps):
-                # Check if next step has placeholder
-                next_step = steps[i] if i < len(steps) else None
-                if next_step and ("MESSAGE_ID" in next_step.get("command", "") or "DRAFT_ID" in next_step.get("command", "")):
-                    next_command = next_step.get("command", "")
-                    
-                    # Only invoke sequential planner for complex workflows (multiple views, urgency analysis, etc.)
-                    # For simple workflows, just resolve the placeholder
-                    needs_planning = (
-                        "urgent" in instruction.lower() or
-                        "priority" in instruction.lower() or
-                        len([s for s in steps if "mail:view" in s.get("command", "")]) > 1
-                    )
-                    
-                    if needs_planning:
-                        from agent.tools.sequential_planner import plan_next_step
+            # Check if workflow is complete
+            if memory and memory.is_complete():
+                typer.echo("")
+                typer.secho("✓ All planned steps completed", fg=typer.colors.GREEN, dim=True)
+                
+                # Ask LLM: "Are we truly done or do we need more steps?"
+                typer.echo("")
+                typer.secho("🤔 Checking if more steps are needed...", fg=typer.colors.BLUE, dim=True)
+                
+                # Simple check: if original request mentioned a number and we have that many items in context
+                # Ask LLM if we've covered all of them
+                from agent.tools.tiered_planner import _call_ollama, _parse_json_from_response
+                
+                check_prompt = f"""Given the completed workflow, determine if the goal is fully achieved.
+
+ORIGINAL REQUEST: "{memory.original_request}"
+
+COMPLETED STEPS:
+{chr(10).join(f"{i+1}. {step['instruction']} → {step['command']}" for i, step in enumerate(memory.completed_steps))}
+
+AVAILABLE CONTEXT:
+{', '.join(f"{k}: {len(v) if isinstance(v, list) else 'available'}" for k, v in memory.context.items())}
+
+Question: Is the original request FULLY satisfied, or do we need additional steps?
+
+Examples:
+- Request: "analyze my last 3 emails" + Only analyzed 1 → Need 2 more steps
+- Request: "check emails and reply" + Checked but didn't reply → Need more steps
+- Request: "list 5 emails" + Listed 5 emails → Complete!
+
+Respond with ONLY valid JSON:
+{{
+  "is_complete": true/false,
+  "reasoning": "why it's complete or what's missing",
+  "additional_steps": ["step 1", "step 2"] or []
+}}
+
+JSON only:"""
+                
+                response = _call_ollama(check_prompt)
+                parsed = _parse_json_from_response(response)
+                
+                if parsed and not parsed.get("is_complete", True):
+                    additional = parsed.get("additional_steps", [])
+                    if additional:
+                        typer.secho(f"   → Found {len(additional)} more step(s) needed", fg=typer.colors.BLUE, dim=True)
+                        typer.echo(f"   Reason: {parsed.get('reasoning', 'Incomplete task')}")
                         
-                        typer.secho("🔄 Planning next step based on output...", fg=typer.colors.MAGENTA, dim=True)
+                        # Add additional steps to the plan
+                        memory.steps_plan.extend(additional)
+                        typer.echo("")
+                        typer.secho("📋 Updated plan:", fg=typer.colors.YELLOW)
+                        for i, step in enumerate(additional, len(steps) + 1):
+                            typer.echo(f"   {i}. {step}")
                         
-                        remaining_goal = reasoning  # Use original reasoning as goal
-                        planned_step = plan_next_step(
-                            instruction,
-                            completed_steps,
-                            remaining_goal,
-                            context=auto_context,
-                        )
-                        
-                        if planned_step and planned_step.get('has_next_step'):
-                            # Replace the placeholder step with the dynamically planned one
-                            steps[i] = {
-                                "command": planned_step.get('command', ''),
-                                "description": planned_step.get('description', ''),
-                                "needs_approval": planned_step.get('needs_approval', False)
-                            }
-                            typer.secho(f"   → Next step: {planned_step.get('command', '')}\n", fg=typer.colors.MAGENTA, dim=True)
-                        else:
-                            # No more steps needed, truncate the workflow
-                            steps = steps[:i]
-                            typer.secho("   → No more steps needed\n", fg=typer.colors.MAGENTA, dim=True)
-                    else:
-                        # Simple workflow - just resolve placeholder without changing command
-                        # The resolve_placeholders function will handle it in the next iteration
-                        pass
-
-            # Extract draft IDs from output when available
-            if command_to_run.startswith("mail:draft"):
-                draft_match = re.search(r"Draft ID:\s*([^\s]+)", result or "")
-                if draft_match:
-                    draft_id = draft_match.group(1)
-                    auto_context["mail:last_draft_ids"] = [draft_id]
-
-                    if should_offer_send:
-                        typer.echo("")
-                        send_now = typer.confirm("Do you want to send this draft now?", default=True)
-                    else:
-                        send_now = False
-
-                    if send_now:
-                        send_command = f"mail:send draft-id:{draft_id}"
-                        typer.echo(f"   Executing: {send_command}")
-                        send_extras: Dict[str, Any] = {}
-                        try:
-                            send_result = execute_single_command(send_command, extras=send_extras)
-                            workflow_outputs.append(f"{send_command}\n{send_result}")
-                            typer.echo(send_result)
-                            auto_context["mail:last_sent_draft_id"] = [draft_id]
-                        except Exception as send_exc:  # pragma: no cover
-                            typer.secho(f"   ❌ Failed to send draft: {send_exc}", fg=typer.colors.RED)
-                            workflow_outputs.append(f"{send_command}\nERROR: {send_exc}")
-                        typer.echo("")
-                    else:
-                        typer.secho(
-                            f"   ✅ Draft saved. Send later with: clai do \"mail:send draft-id:{draft_id}\"",
-                            fg=typer.colors.GREEN,
-                        )
-                        typer.echo("")
-
-        typer.secho("✅ Workflow completed!", fg=typer.colors.GREEN, bold=True)
+                        # Continue execution
+                        continue
+                
+                break        
+        # ============================================================
+        # Workflow Complete
+        # ============================================================
         typer.echo("")
-        typer.secho("💡 Tip: For full interactive control, use individual commands:", fg=typer.colors.BLUE)
-        typer.echo("   • clai interpret \"your instruction\"")
-        typer.echo("   • clai draft-email \"your message\"")
-        typer.echo("   • clai do <command>")
+        typer.secho("✅ Workflow completed!", fg=typer.colors.GREEN, bold=True)
+        
+        if memory:
+            typer.echo("")
+            typer.secho("📊 Execution Summary:", fg=typer.colors.BLUE)
+            typer.echo(f"   Steps completed: {len(memory.completed_steps)}/{len(memory.steps_plan)}")
+            if memory.context:
+                typer.echo(f"   Context collected: {', '.join(memory.context.keys())}")
+        
+        typer.echo("")
+        typer.secho("💡 Tip: View execution details with:", fg=typer.colors.BLUE)
+        typer.echo("   • clai history -n 1")
         typer.echo("")
 
         log_command(
@@ -544,9 +620,14 @@ def auto(
             output="\n\n".join(workflow_outputs),
             command_type="auto",
             metadata={
-                "steps": steps,
+                "architecture": "tiered",
+                "categories": classification.categories,
+                "sequential": classification.needs_sequential,
+                "steps_planned": len(steps),
+                "steps_executed": len(memory.completed_steps) if memory else len(workflow_outputs),
                 "run_flag": run,
                 "reasoning": reasoning,
+                "memory_summary": memory.get_summary() if memory else None,
             },
         )
         

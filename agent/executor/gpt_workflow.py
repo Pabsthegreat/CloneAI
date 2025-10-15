@@ -183,6 +183,46 @@ class GPTWorkflowGenerator:
 
         return GPTWorkflowResult(module_code=module_code, tests=tests, notes=notes, summary=summary)
 
+    def _get_category_for_namespace(
+        self, 
+        namespace: str, 
+        context: WorkflowGenerationContext
+    ) -> str:
+        """
+        Dynamically determine the category for a namespace by looking at existing workflows.
+        
+        This avoids hardcoding category mappings and allows the system to learn from
+        existing workflows in the registry.
+        """
+        # Check existing workflows in this namespace to find their category
+        from agent.workflows import registry as workflow_registry
+        
+        specs = workflow_registry.list(namespace=namespace)
+        if specs:
+            # Use the category from the first workflow in this namespace
+            for spec in specs:
+                if spec.metadata and "category" in spec.metadata:
+                    return spec.metadata["category"]
+        
+        # Fallback: Create a category name from the namespace
+        # Convert namespace to a readable category name
+        namespace_to_category = {
+            "mail": "MAIL COMMANDS",
+            "calendar": "CALENDAR COMMANDS", 
+            "task": "SCHEDULER COMMANDS",
+            "tasks": "SCHEDULER COMMANDS",
+            "doc": "DOCUMENT COMMANDS",
+            "convert": "DOCUMENT COMMANDS",
+            "merge": "DOCUMENT COMMANDS",
+            "system": "GENERAL COMMANDS",
+            "web": "WEB COMMANDS",
+            "web_search": "WEB COMMANDS",
+            "math": "MATH COMMANDS",
+            "text": "TEXT COMMANDS",
+        }
+        
+        return namespace_to_category.get(namespace, f"{namespace.upper()} COMMANDS")
+
     def _build_messages(
         self,
         recipe: WorkflowRecipe,
@@ -221,27 +261,27 @@ class GPTWorkflowGenerator:
             recent = previous_errors[-2:]
             error_section = f"\n\nPrevious errors:\n" + "\n".join(f"  - {e}" for e in recent)
 
-        # Determine category based on namespace
-        category_map = {
-            "mail": "MAIL COMMANDS",
-            "calendar": "CALENDAR COMMANDS",
-            "task": "SCHEDULER COMMANDS",
-            "tasks": "SCHEDULER COMMANDS",
-            "doc": "DOCUMENT COMMANDS",
-            "convert": "DOCUMENT COMMANDS",
-            "merge": "DOCUMENT COMMANDS",
-            "system": "GENERAL COMMANDS",
-            "math": "MATH COMMANDS",
-            "text": "TEXT COMMANDS",
-        }
-        category = category_map.get(namespace, "OTHER COMMANDS")
+        # Determine category dynamically from existing workflows in this namespace
+        category = self._get_category_for_namespace(namespace, context)
+
+        # User context from LLM (crucial for understanding intent!)
+        context_section = ""
+        if recipe.user_context:
+            context_section = f"""
+USER INTENT & CONTEXT:
+{recipe.user_context}
+
+⚠️  CRITICAL: Read the above context carefully! It explains what the user is trying to do,
+what parameters should be used (e.g., URL vs file path), and the expected behavior.
+Generate code that matches this intent, not just the command name!
+"""
 
         user_prompt = f"""Generate a CloneAI workflow module.
 
 Command: {command_key}
 Summary: {recipe.summary}
 Description: {recipe.description}
-
+{context_section}
 Available tools:
 {tool_section or "  (search agent/tools for helpers)"}
 

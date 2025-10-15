@@ -223,69 +223,143 @@ for i, step in enumerate(steps):
 ```
 
 **Key Functions:**
-- `resolve_placeholders()` → Line 1721-1729
-- `execute_single_command()` → Line 159-230
-- `plan_next_step()` → From `agent/tools/sequential_planner.py`
+- `check_query_safety()` → From `agent/tools/guardrails.py` (Step 0: Safety check)
+- `classify_request()` → From `agent/tools/tiered_planner.py` (Step 1: Classification)
+- `plan_step_execution()` → From `agent/tools/tiered_planner.py` (Step 2+: Execution)
 
 ---
 
-### 3.2 Placeholder Resolution
-**File:** `agent/cli.py`
-**Lines:** 1721-1729
-**Function:** `resolve_placeholders()`
+### 3.2 Guardrails (Safety Check - Step 0)
+**File:** `agent/tools/guardrails.py`
+**Function:** `check_query_safety()`
 
 ```python
-def resolve_placeholders(raw_command: str) -> str:
-    resolved = raw_command
+def check_query_safety(query: str) -> GuardrailResult:
+    """
+    Check if query is safe to execute.
+    Blocks malicious/inappropriate queries before workflow execution.
+    """
+    # Model: qwen3:4b-instruct (local)
+    # Timeout: 10s
+    # Fail-open: If check fails, allow query
     
-    # Replace MESSAGE_ID with actual ID from context
-    message_ids = auto_context.get("mail:last_message_ids")
-    if message_ids:
-        resolved = resolved.replace("MESSAGE_ID", message_ids[0], 1)
+    prompt = f"""
+    Analyze this request for safety:
+    "{query}"
     
-    # Replace DRAFT_ID with actual ID from context
-    draft_ids = auto_context.get("mail:last_draft_ids")
-    if draft_ids:
-        resolved = resolved.replace("DRAFT_ID", draft_ids[0], 1)
+    Banned categories: hacking, illegal, violence, harassment, 
+                       malware, phishing, spam, fraud
     
-    return resolved
+    Return JSON: {{"is_safe": true/false, "category": "...", "reason": "..."}}
+    """
+    
+    # Returns GuardrailResult with is_safe, category, reason, confidence
 ```
 
-**Example:**
+**Examples:**
 ```
-Input:  "mail:summarize id:MESSAGE_ID"
-Context: {"mail:last_message_ids": ["199e610074e62292"]}
-Output: "mail:summarize id:199e610074e62292"
+❌ BLOCKED: "how to hack someone's email"
+   → GuardrailResult(is_safe=False, category="hacking")
+
+✅ ALLOWED: "secure my email account"
+   → GuardrailResult(is_safe=True, category=None)
 ```
 
 ---
 
-### 3.3 Sequential Planner (Complex Workflows Only)
-**File:** `agent/tools/sequential_planner.py`
-**Lines:** 114-186
-**Function:** `plan_next_step()`
+### 3.3 Tiered Planner (Classification - Step 1)
+**File:** `agent/tools/tiered_planner.py`
+**Function:** `classify_request()`
 
 ```python
-def plan_next_step(
-    original_instruction: str,
-    completed_steps: List[Dict],
-    remaining_goal: str,
-    context: Optional[Dict] = None
-):
-    # Deterministic planning for multi-email urgency analysis
+def classify_request(user_request: str, registry: WorkflowRegistry) -> Dict:
+    """
+    First-stage classifier: determines action type and creates execution plan.
+    Uses category-based filtering to reduce tokens by 75%.
+    """
+    # Get dynamic categories from registry (not hardcoded)
+    categories = list(registry.get_categories())
+    
+    # Classify with local LLM (qwen3:4b-instruct)
+    prompt = f"""
+    Request: "{user_request}"
+    Available Categories: {', '.join(categories)}
+    
+    Determine:
+    1. Action type: LOCAL_ANSWER, WORKFLOW_EXECUTION, or NEEDS_NEW_WORKFLOW
+    2. If WORKFLOW_EXECUTION: List steps with commands and params
+    3. If LOCAL_ANSWER: Provide answer directly
+    """
+    
+    # Returns:
+    # {
+    #   "action": "WORKFLOW_EXECUTION",
+    #   "steps": [
+    #     {"command": "mail:list", "params": {"last": 5}},
+    #     {"command": "mail:summarize", "params": {"message_id": "<FROM_STEP_1>"}}
+    #   ]
+    # }
 ```
 
-**Flow:**
-1. Collects available message IDs from context
-2. Tracks which emails have been viewed
-3. Identifies unviewed emails
-4. If unviewed exist → return `mail:view id:NEXT_ID`
-5. If all viewed → analyze urgency and return `mail:reply id:MOST_URGENT`
+---
 
-**Used For:**
-- ✅ "Reply to the most urgent from my last 3 emails"
-- ✅ "Prioritize my last 5 emails and respond to critical ones"
-- ❌ NOT used for simple workflows like "summarize my last email"
+### 3.4 Tiered Planner (Execution - Step 2+)
+**File:** `agent/tools/tiered_planner.py`
+**Function:** `plan_step_execution()`
+
+```python
+def plan_step_execution(
+    memory: WorkflowMemory,
+    step_index: int,
+    registry: WorkflowRegistry
+) -> Dict:
+    """
+    Memory-aware step execution.
+    Only loads relevant commands (not all 200+), reducing tokens by 75%.
+    """
+    current_step = memory.steps_plan[step_index]
+    
+    # Extract category from step command
+    command = current_step.get("command", "")
+    category = command.split(':')[0] if ':' in command else None
+    
+    # Load only relevant commands for this category
+    relevant_commands = registry.get_workflows_by_category(category)
+    
+    # Build context from previous steps
+    context_summary = memory.get_summary()
+    
+    # Plan execution with local LLM
+    prompt = f"""
+    Original Request: {memory.original_request}
+    Current Step ({step_index + 1}/{len(memory.steps_plan)}): {current_step}
+    
+    Previous Results:
+    {context_summary}
+    
+    Available Commands (category: {category}):
+    {relevant_commands}
+    
+    Execute this step. Extract parameters from context if needed.
+    """
+    
+    # Returns: {"command": "mail:summarize", "params": {"message_id": "abc123"}}
+```
+
+**Memory Structure:**
+```python
+@dataclass
+class WorkflowMemory:
+    original_request: str
+    steps_plan: List[Dict]
+    completed_steps: List[Dict]
+    context: Dict[str, Any]  # Indexed data: message_ids, draft_ids, etc.
+```
+
+**Token Efficiency:**
+- Classification: ~1,500 tokens (vs ~24,000 with all commands)
+- Per-step execution: ~4,500 tokens (category-filtered commands only)
+- **Total savings: 75%**
 
 ---
 
