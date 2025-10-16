@@ -266,6 +266,7 @@ IMPORTANT:
 - Example: "find restaurants with phone numbers" → Just ["Search for restaurants with contact info"]
 - Example: "search then do math" → ["Search for X", "Compute Y"] (2 independent steps, not sequential!)
 - Don't create "present" or "format" steps at the end
+- If user asks for something in detail about a topic then always query the articles, read and analyse.
 - needs_sequential=true ONLY if step B needs output from step A
 - needs_sequential=false if steps are independent (search + math don't depend on each other)
 - Only list categories that are ACTUALLY needed
@@ -370,6 +371,15 @@ CRITICAL RULES:
 3. NEEDS_EXPANSION: If step needs breakdown (e.g., "Reply to 5 emails" → 5 separate reply steps)
 4. NEEDS_NEW_WORKFLOW: If no existing command can do this task
 
+⚠️ SEARCH WORKFLOW GUIDANCE:
+- For "what is", "how many", "statistics", "current data" questions → USE search:web or search:deep
+- For "in detail" or in depth queries or some explanation from the results... → USE search:web and use the urls from the result search:deep to get inference
+- search:web exists and works for ANY internet query (news, facts, statistics, current info)
+- search:deep extracts actual content from webpages for comprehensive answers
+- for "in detail" or in depth queries or some explanation from the results... → USE search:deep
+- DO NOT create new search workflows - use existing ones!
+- Only request new workflow if task is truly unique and not searchable
+
 IMPORTANT: Before choosing EXECUTE_COMMAND, check if the step can be done with LOCAL_ANSWER!
 Examples: Simple math, text manipulation, translations can be computed directly
 
@@ -398,6 +408,7 @@ Respond with ONLY valid JSON (no markdown):
 For EXECUTE_COMMAND:
 - Use EXACT syntax: namespace:action param1:value param2:"quoted value"
 - DO NOT use function syntax with parentheses: namespace:action(param:value)
+- DO NOT use brackets for optional parameters: [param:value] is WRONG, just param:value
 - Use REAL IDs from "Available Context" (e.g., id:199e85d5b5b09017, NOT id:1)
 - CRITICAL QUOTING RULES:
   * ALL parameter values containing spaces, punctuation, or special characters MUST be quoted with double quotes
@@ -415,6 +426,8 @@ For EXECUTE_COMMAND:
   * calendar:create title:"Team Meeting" start:"2025-10-17T16:30:00" duration:60
   * mail:reply id:199e85d5b5b09017 body:"Thank you for your message. I will respond soon."
   * mail:draft to:"me@gmail.com" subject:"Physical Activity" body:"Exercise is important for health."
+  * search:web query:"latest AI news" num_results:5
+  * search:deep query:"Ayodhya temple statistics" num_results:3
 - ✅ COMMAND CHAINING SUPPORTED (use && to chain multiple commands):
   * When step requires same action on multiple items, CHAIN THEM with &&
   * Example: mail:download id:abc123 && mail:download id:def456 && mail:download id:xyz789
