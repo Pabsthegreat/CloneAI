@@ -7,10 +7,10 @@ This module translates natural language instructions into CloneAI commands.
 import datetime
 import json
 import os
-import subprocess
-import sys
 from typing import Dict, List, Optional
 
+from agent.config.runtime import LOCAL_PLANNER
+from agent.tools.ollama_client import run_ollama
 from agent.workflows import build_command_reference
 
 # Command documentation for the LLM (generated from the workflow registry plus legacy commands)
@@ -75,7 +75,7 @@ USER PERSONALIZATION:
 
 def call_ollama(prompt: str, model: str = "qwen3:4b-instruct") -> Optional[str]:
     """
-    Call Ollama API to get LLM response.
+    Call the local Ollama CLI to get an LLM response using deterministic settings.
     
     Args:
         prompt: The prompt to send to the model
@@ -84,35 +84,12 @@ def call_ollama(prompt: str, model: str = "qwen3:4b-instruct") -> Optional[str]:
     Returns:
         Model response text or None if error
     """
-    try:
-        # Use ollama CLI with piped input
-        process = subprocess.Popen(
-            ["ollama", "run", model],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        
-        # Send prompt and get response
-        stdout, stderr = process.communicate(input=prompt, timeout=60)
-        
-        if process.returncode == 0:
-            return stdout.strip()
-        else:
-            print(f"❌ Ollama error: {stderr}")
-            return None
-            
-    except subprocess.TimeoutExpired:
-        process.kill()
-        print("❌ Ollama request timed out (60s)")
-        return None
-    except FileNotFoundError:
-        print("❌ Ollama not found. Please install: https://ollama.ai")
-        return None
-    except Exception as e:
-        print(f"❌ Error calling Ollama: {str(e)}")
-        return None
+    return run_ollama(
+        prompt,
+        profile=LOCAL_PLANNER,
+        model=model,
+        timeout=60,
+    )
 
 def get_command_suggestions(user_input: str) -> List[str]:
     """

@@ -74,10 +74,10 @@ def calendar_create_handler(ctx: WorkflowContext, params: Dict[str, Any]) -> str
         raise WorkflowValidationError("'title' and 'start' are required")
     
     return create_calendar_event(
-        title=title,
+        summary=title,
         start_time=start,
         end_time=end,
-        duration=duration,
+        duration_minutes=duration if duration else 60,
         location=location,
         description=description
     )

@@ -253,7 +253,20 @@ class GPTWorkflowGenerator:
             if key_lines:
                 tool_hints.append(f"{path}: {', '.join(key_lines[:2])}")
         
-        tool_section = "\n".join(tool_hints[:3])  # Max 3 tools
+        # Add common tool import mappings to help GPT use correct paths
+        tool_imports = """
+IMPORTANT - Correct import paths for common tools:
+  - Web search: from agent.tools.web_search import search_web_formatted, WebSearchTool
+  - Email: from agent.tools.mail import GmailClient, get_email_messages, create_draft_email
+  - Calendar: from agent.tools.calendar import CalendarClient, create_calendar_event
+  - Documents: from agent.tools.documents import DocumentManager
+  - LLM/AI: from agent.tools.ollama_client import run_ollama
+  - NL Parser: from agent.tools.nl_parser import parse_natural_language, call_ollama
+
+⚠️  NOTE: There is NO 'agent.tools.search' module - use 'agent.tools.web_search' instead!
+"""
+        
+        tool_section = tool_imports + "\n" + ("\n".join(tool_hints[:3]) if tool_hints else "(search agent/tools for helpers)")
 
         # Previous errors (only last 2)
         error_section = ""
@@ -304,6 +317,8 @@ Requirements:
 - Implement REAL working logic (NO placeholders, TODOs, or "not implemented" messages)
 - Handle errors gracefully with informative messages
 - DO NOT generate tests
+- ⚠️  VERIFY all imports exist! Check the "Available tools" section for correct module paths
+- Common mistake: using 'agent.tools.search' (WRONG) instead of 'agent.tools.web_search' (CORRECT)
 
 Correct pattern:
 ```python

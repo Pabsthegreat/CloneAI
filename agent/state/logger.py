@@ -240,3 +240,17 @@ def search_history(query: str, search_in: str = "both") -> List[Dict[str, Any]]:
     """Convenience function to search history."""
     logger = get_logger()
     return logger.search_history(query, search_in)
+
+
+def clear_history():
+    """Convenience function to clear history."""
+    logger = get_logger()
+    logger.clear_history()
+
+
+def get_command_history(limit: Optional[int] = None, search: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Get command history with optional search."""
+    logger = get_logger()
+    if search:
+        return logger.search_history(search)
+    return logger.get_history(limit=limit)

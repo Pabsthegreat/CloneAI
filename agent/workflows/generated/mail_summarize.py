@@ -1,10 +1,11 @@
 """Mail summarization workflow - fetches and summarizes email content."""
 
 from typing import Any, Dict
-import subprocess
-import json
-from agent.workflows import register_workflow, ParameterSpec, WorkflowContext
+
+from agent.config.runtime import LOCAL_PLANNER
 from agent.tools.mail import get_full_email
+from agent.tools.ollama_client import run_ollama
+from agent.workflows import ParameterSpec, WorkflowContext, register_workflow
 
 
 def _summarize_text_locally(text: str, word_count: int = 50, model: str = "qwen3:4b-instruct") -> str:
@@ -16,23 +17,17 @@ Text:
 
 Provide ONLY the {word_count}-word summary (no extra commentary):"""
     
-    try:
-        result = subprocess.run(
-            ['ollama', 'run', model, prompt],
-            capture_output=True,
-            text=True,
-            timeout=15
-        )
-        
-        if result.returncode == 0:
-            return result.stdout.strip()
-        else:
-            return f"❌ Summarization failed: {result.stderr}"
-            
-    except subprocess.TimeoutExpired:
-        return "❌ Summarization timed out"
-    except Exception as e:
-        return f"❌ Error: {str(e)}"
+    response = run_ollama(
+        prompt,
+        profile=LOCAL_PLANNER,
+        model=model,
+        timeout=15,
+    )
+
+    if not response:
+        return "❌ Summarization failed: no response from Ollama"
+
+    return response.strip()
 
 
 @register_workflow(

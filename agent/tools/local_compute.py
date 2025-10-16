@@ -6,8 +6,7 @@ request can be answered instantly without invoking workflows or the GPT agent.
 from __future__ import annotations
 
 import json
-import subprocess
-from typing import Optional, Tuple
+from typing import Optional
 
 from agent.config.runtime import (
     CLASSIFIER_CAPABILITIES,
@@ -15,6 +14,7 @@ from agent.config.runtime import (
     LOCAL_COMMAND_CLASSIFIER,
     topic_list,
 )
+from agent.tools.ollama_client import run_ollama
 
 
 def _build_classifier_prompt(instruction: str) -> str:
@@ -40,28 +40,13 @@ def _build_classifier_prompt(instruction: str) -> str:
     )
 
 
-def _invoke_local_model(prompt: str) -> Tuple[int, str, str]:
-    """Call the configured local model via Ollama CLI."""
-    result = subprocess.run(
-        ["ollama", "run", LOCAL_COMMAND_CLASSIFIER.model, prompt],
-        capture_output=True,
-        text=True,
-        timeout=LOCAL_COMMAND_CLASSIFIER.timeout_seconds,
-    )
-    return result.returncode, result.stdout, result.stderr
-
-
 def can_local_llm_handle(instruction: str) -> tuple[bool, Optional[str]]:
     prompt = _build_classifier_prompt(instruction)
-    try:
-        return_code, stdout, _stderr = _invoke_local_model(prompt)
-    except (subprocess.TimeoutExpired, Exception):
+    response = run_ollama(prompt, profile=LOCAL_COMMAND_CLASSIFIER)
+    if not response:
         return False, None
 
-    if return_code != 0:
-        return False, None
-
-    output = stdout.strip()
+    output = response.strip()
     json_start = output.find("{")
     json_end = output.rfind("}") + 1
     if json_start == -1 or json_end <= json_start:

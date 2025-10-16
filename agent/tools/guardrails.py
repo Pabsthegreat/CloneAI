@@ -4,9 +4,13 @@ Guardrails for filtering inappropriate or banned queries before processing.
 Uses a lightweight LLM (gemma2:2b) for fast content moderation.
 """
 
+import json
 import subprocess
 from dataclasses import dataclass
 from typing import Optional, List
+
+from agent.config.runtime import LOCAL_COMMAND_CLASSIFIER
+from agent.tools.ollama_client import run_ollama
 
 
 @dataclass
@@ -42,9 +46,6 @@ def check_query_safety(user_query: str, model: str = "qwen3:4b-instruct") -> Gua
     Returns:
         GuardrailResult indicating if query should be allowed
     """
-    
-    banned_list = ", ".join(BANNED_CATEGORIES)
-    
     prompt = f"""You are a security guardrail. Determine if a query is SAFE or UNSAFE.
 
 QUERY: "{user_query}"
@@ -86,66 +87,50 @@ CRITICAL:
 
 JSON only:"""
 
+    response = run_ollama(
+        prompt,
+        profile=LOCAL_COMMAND_CLASSIFIER,
+        model=model,
+        timeout=10,
+    )
+
+    if not response:
+        return GuardrailResult(
+            is_allowed=True,
+            reason="Guardrail check failed, allowing query",
+        )
+
+    response = response.strip()
+
+    # Remove markdown code blocks if present
+    if response.startswith("```"):
+        lines = response.split("\n")
+        response = "\n".join(lines[1:-1]) if len(lines) > 2 else response
+        if response.startswith("json"):
+            response = response[4:].strip()
+
+    start = response.find("{")
+    end = response.rfind("}") + 1
+    if start != -1 and end > start:
+        response = response[start:end]
+
     try:
-        process = subprocess.Popen(
-            ["ollama", "run", model],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        
-        stdout, stderr = process.communicate(input=prompt, timeout=10)
-        
-        if process.returncode != 0:
-            # On error, allow the query (fail open for better UX)
-            return GuardrailResult(
-                is_allowed=True,
-                reason="Guardrail check failed, allowing query"
-            )
-        
-        # Parse response
-        response = stdout.strip()
-        
-        # Remove markdown code blocks if present
-        if response.startswith("```"):
-            lines = response.split("\n")
-            response = "\n".join(lines[1:-1]) if len(lines) > 2 else response
-            if response.startswith("json"):
-                response = response[4:].strip()
-        
-        # Find JSON object
-        start = response.find("{")
-        end = response.rfind("}") + 1
-        if start != -1 and end > start:
-            response = response[start:end]
-        
-        import json
         result = json.loads(response)
-        
-        is_safe = result.get("is_safe", True)
-        category = result.get("category", "")
-        reason = result.get("reason", "")
-        
-        return GuardrailResult(
-            is_allowed=is_safe,
-            reason=reason,
-            category=category
-        )
-        
-    except subprocess.TimeoutExpired:
-        process.kill()
-        # Timeout - fail open
+    except json.JSONDecodeError as exc:
         return GuardrailResult(
             is_allowed=True,
-            reason="Guardrail check timed out, allowing query"
+            reason=f"Guardrail JSON parse error: {exc}",
         )
-    except Exception as e:
-        # Any error - fail open for better UX
-        return GuardrailResult(
-            is_allowed=True,
-            reason=f"Guardrail check error: {str(e)}"
-        )
+
+    is_safe = result.get("is_safe", True)
+    category = result.get("category", "")
+    reason = result.get("reason", "")
+
+    return GuardrailResult(
+        is_allowed=is_safe,
+        reason=reason,
+        category=category,
+    )
 
 
 def is_model_available(model: str = "qwen3:4b-instruct") -> bool:

@@ -10,11 +10,25 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Iterable, Sequence, Tuple
+from typing import Dict, Iterable, Sequence, Tuple
 
 
 def _get_env(name: str, default: str) -> str:
     return os.getenv(name, default)
+
+
+def _get_env_chain(*names: str, default: str) -> str:
+    """
+    Return the first environment variable value that is set from the provided names.
+    Falls back to the supplied default if none are defined.
+    """
+    for name in names:
+        if not name:
+            continue
+        value = os.getenv(name)
+        if value is not None:
+            return value
+    return default
 
 
 @dataclass(frozen=True)
@@ -23,16 +37,101 @@ class LLMProfile:
 
     model: str
     timeout_seconds: int
+    temperature: float = 0.0
+    top_p: float = 1.0
+    top_k: int = 1
+    seed: int = 42
+    repeat_penalty: float = 1.0
+
+    def to_ollama_options(self) -> Dict[str, float]:
+        """Return deterministic Ollama generation settings."""
+        return {
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "repeat_penalty": self.repeat_penalty,
+            "seed": self.seed,
+        }
 
 
 LOCAL_COMMAND_CLASSIFIER = LLMProfile(
     model=_get_env("CLAI_CLASSIFIER_MODEL", "qwen3:4b-instruct"),
     timeout_seconds=int(_get_env("CLAI_CLASSIFIER_TIMEOUT", "8")),
+    temperature=float(
+        _get_env_chain(
+            "CLAI_CLASSIFIER_TEMPERATURE",
+            "CLAI_LOCAL_TEMPERATURE",
+            default="0.0",
+        )
+    ),
+    top_p=float(
+        _get_env_chain(
+            "CLAI_CLASSIFIER_TOP_P",
+            "CLAI_LOCAL_TOP_P",
+            default="1.0",
+        )
+    ),
+    top_k=int(
+        _get_env_chain(
+            "CLAI_CLASSIFIER_TOP_K",
+            "CLAI_LOCAL_TOP_K",
+            default="1",
+        )
+    ),
+    seed=int(
+        _get_env_chain(
+            "CLAI_CLASSIFIER_SEED",
+            "CLAI_LOCAL_SEED",
+            default="42",
+        )
+    ),
+    repeat_penalty=float(
+        _get_env_chain(
+            "CLAI_CLASSIFIER_REPEAT_PENALTY",
+            "CLAI_LOCAL_REPEAT_PENALTY",
+            default="1.0",
+        )
+    ),
 )
 
 LOCAL_PLANNER = LLMProfile(
     model=_get_env("CLAI_PLANNER_MODEL", "qwen3:4b-instruct"),
     timeout_seconds=int(_get_env("CLAI_PLANNER_TIMEOUT", "30")),
+    temperature=float(
+        _get_env_chain(
+            "CLAI_PLANNER_TEMPERATURE",
+            "CLAI_LOCAL_TEMPERATURE",
+            default="0.0",
+        )
+    ),
+    top_p=float(
+        _get_env_chain(
+            "CLAI_PLANNER_TOP_P",
+            "CLAI_LOCAL_TOP_P",
+            default="1.0",
+        )
+    ),
+    top_k=int(
+        _get_env_chain(
+            "CLAI_PLANNER_TOP_K",
+            "CLAI_LOCAL_TOP_K",
+            default="1",
+        )
+    ),
+    seed=int(
+        _get_env_chain(
+            "CLAI_PLANNER_SEED",
+            "CLAI_LOCAL_SEED",
+            default="42",
+        )
+    ),
+    repeat_penalty=float(
+        _get_env_chain(
+            "CLAI_PLANNER_REPEAT_PENALTY",
+            "CLAI_LOCAL_REPEAT_PENALTY",
+            default="1.0",
+        )
+    ),
 )
 
 REMOTE_GENERATOR_MODEL = _get_env("CLAI_GPT_MODEL", "gpt-4.1")

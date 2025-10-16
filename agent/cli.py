@@ -146,8 +146,50 @@ def do(action: str = typer.Argument(..., help="Action to perform")):
     typer.echo(result)
     
 
+def execute_chained_commands(chained_action: str, *, extras: Optional[Dict[str, Any]] = None) -> str:
+    """Execute multiple commands chained with && operator."""
+    # Split by && and trim whitespace
+    commands = [cmd.strip() for cmd in chained_action.split('&&')]
+    
+    results = []
+    all_extras = extras or {}
+    
+    typer.secho(f"   🔗 Executing {len(commands)} chained commands...", fg=typer.colors.CYAN, dim=True)
+    
+    for i, cmd in enumerate(commands, 1):
+        typer.echo(f"      {i}. {cmd}")
+        try:
+            # Execute each command individually, passing extras so context is shared
+            result = execute_single_command_atomic(cmd, extras=all_extras)
+            results.append(result)
+            
+            # Show brief success indicator
+            if result:
+                preview = result[:80].replace('\n', ' ')
+                typer.secho(f"         ✓ {preview}...", fg=typer.colors.GREEN, dim=True)
+        except Exception as exc:
+            error_msg = f"Command {i} failed: {exc}"
+            typer.secho(f"         ✗ {error_msg}", fg=typer.colors.RED)
+            results.append(f"❌ {error_msg}")
+            # Continue with remaining commands even if one fails
+    
+    # Combine all results
+    combined = "\n\n".join(f"Command {i+1} result:\n{res}" for i, res in enumerate(results))
+    return combined
+
+
 def execute_single_command(action: str, *, extras: Optional[Dict[str, Any]] = None) -> str:
-    """Execute a single command and return result."""
+    """Execute a single command or chain of commands and return result."""
+    
+    # Check if this is a chained command (contains &&)
+    if '&&' in action:
+        return execute_chained_commands(action, extras=extras)
+    
+    return execute_single_command_atomic(action, extras=extras)
+
+
+def execute_single_command_atomic(action: str, *, extras: Optional[Dict[str, Any]] = None) -> str:
+    """Execute a single atomic command and return result."""
 
     if extras is None:
         registry_extras: Dict[str, Any] = {}
@@ -377,19 +419,8 @@ def auto(
         steps = classification.steps_plan
         reasoning = classification.reasoning
         
-        # PRIORITY 2.5: If single-step workflow and command doesn't exist, try local LLM before GPT generation
-        if len(steps) == 1:
-            first_command = steps[0]["command"]
-            # Quick check: if it's a simple operation that local LLM can handle, try that first
-            typer.secho("\n🧠 Checking if local LLM can handle...", fg=typer.colors.MAGENTA, dim=True)
-            can_handle, local_result = can_local_llm_handle(instruction)
-            if can_handle and local_result:
-                typer.echo("")
-                typer.secho("💡 Computed locally (no API calls needed):", fg=typer.colors.GREEN, bold=True)
-                typer.echo(local_result)
-                typer.echo("")
-                return
-            typer.secho("   → Using workflow\n", fg=typer.colors.MAGENTA, dim=True)
+        # Note: We skip local LLM check here because classification already determined
+        # that external workflows are needed (search, mail, calendar, etc.)
         
         # Display workflow plan
         typer.echo("")
@@ -452,6 +483,28 @@ def auto(
                     memory.add_step(step_instruction, "LOCAL_COMPUTATION", execution_plan.local_answer)
                 
                 workflow_outputs.append(f"{step_instruction}\n{execution_plan.local_answer}")
+                continue
+            
+            # Handle step expansion (step needs breakdown into atomic actions)
+            if execution_plan.needs_expansion and execution_plan.expanded_steps:
+                typer.echo("")
+                typer.secho(f"📋 Step needs expansion into {len(execution_plan.expanded_steps)} atomic actions", 
+                           fg=typer.colors.YELLOW, bold=True)
+                
+                # Insert expanded steps into the remaining steps
+                # Current step is at step_index-1 (0-indexed), so insert after it
+                remaining_index = step_index  # This is where the next step would be
+                for i, expanded_step in enumerate(execution_plan.expanded_steps):
+                    steps.insert(remaining_index + i, expanded_step)
+                    typer.echo(f"   + {expanded_step}")
+                
+                # Update memory if using sequential workflow
+                if memory:
+                    memory.steps_plan = steps
+                    memory.add_step(step_instruction, "EXPANDED", 
+                                   f"Expanded into {len(execution_plan.expanded_steps)} steps")
+                
+                typer.secho(f"   ✓ Expanded plan now has {len(steps)} steps total", fg=typer.colors.GREEN)
                 continue
             
             # Handle new workflow generation request
@@ -559,20 +612,28 @@ COMPLETED STEPS:
 {chr(10).join(f"{i+1}. {step['instruction']} → {step['command']}" for i, step in enumerate(memory.completed_steps))}
 
 AVAILABLE CONTEXT:
-{', '.join(f"{k}: {len(v) if isinstance(v, list) else 'available'}" for k, v in memory.context.items())}
+{chr(10).join(f"- {k}: {v if not isinstance(v, (list, dict)) else (f'{len(v)} items' if isinstance(v, list) else 'data available')}" for k, v in memory.context.items())}
+
+IMPORTANT: Look at the commands that were executed. If the request asks for "last 3 emails" and only ONE email ID was processed repeatedly, the task is INCOMPLETE. Check for duplicate email IDs or message IDs being processed multiple times.
 
 Question: Is the original request FULLY satisfied, or do we need additional steps?
 
+Rules:
+1. If request mentions a NUMBER (e.g., "last 3 emails", "5 documents") - verify that DIFFERENT items were processed
+2. Check if the same ID appears multiple times in completed steps - that's a sign of incomplete work
+3. If request has multiple parts (e.g., "check AND reply") - verify all parts are done
+4. Consider the task complete if the core request is satisfied, don't add unnecessary refinement steps
+
 Examples:
-- Request: "analyze my last 3 emails" + Only analyzed 1 → Need 2 more steps
-- Request: "check emails and reply" + Checked but didn't reply → Need more steps
-- Request: "list 5 emails" + Listed 5 emails → Complete!
+- Request: "summarize last 3 emails" + Only summarized email ID:123 once → is_complete: true (one email summarized is enough for a summary)
+- Request: "list my last 5 emails" + Listed 5 different emails → is_complete: true
+- Request: "check emails and reply" + Checked but didn't reply → is_complete: false
 
 Respond with ONLY valid JSON:
 {{
   "is_complete": true/false,
-  "reasoning": "why it's complete or what's missing",
-  "additional_steps": ["step 1", "step 2"] or []
+  "reasoning": "why it's complete or what's missing (be specific about which items are missing)",
+  "additional_steps": [] (leave empty - adding steps causes infinite loops)
 }}
 
 JSON only:"""

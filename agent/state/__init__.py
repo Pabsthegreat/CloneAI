@@ -9,7 +9,9 @@ from .logger import (
     log_command,
     get_history,
     search_history,
-    format_history_list
+    format_history_list,
+    clear_history,
+    get_command_history
 )
 
 __all__ = [
@@ -18,5 +20,7 @@ __all__ = [
     'log_command',
     'get_history',
     'search_history',
-    'format_history_list'
+    'format_history_list',
+    'clear_history',
+    'get_command_history'
 ]

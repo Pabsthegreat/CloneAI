@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import datetime
 import json
-import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from agent.config.runtime import LOCAL_COMMAND_CLASSIFIER
+from agent.config.runtime import LLMProfile, LOCAL_PLANNER
+from agent.tools.ollama_client import run_ollama
 from agent.workflows import registry as workflow_registry
 
 
@@ -110,6 +110,9 @@ class StepExecutionPlan:
     gpt_prompt: Optional[str] = None  # Natural language prompt for GPT generation
     reasoning: str = ""
     local_answer: Optional[str] = None
+    # Dynamic step expansion: if current step needs breakdown into multiple steps
+    needs_expansion: bool = False
+    expanded_steps: List[str] = field(default_factory=list)
 
 
 def _get_available_categories() -> List[str]:
@@ -166,35 +169,15 @@ def _get_commands_for_categories(categories: List[str]) -> str:
     return "\n".join(command_ref)
 
 
-def _call_ollama(prompt: str, model: str = "qwen3:4b-instruct") -> Optional[str]:
-    """Call Ollama CLI with the given prompt."""
-    try:
-        process = subprocess.Popen(
-            ["ollama", "run", model],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        
-        stdout, stderr = process.communicate(input=prompt, timeout=60)
-        
-        if process.returncode == 0:
-            return stdout.strip()
-        else:
-            print(f"❌ Ollama error: {stderr}")
-            return None
-            
-    except subprocess.TimeoutExpired:
-        process.kill()
-        print("❌ Ollama request timed out (60s)")
-        return None
-    except FileNotFoundError:
-        print("❌ Ollama not found. Please install: https://ollama.ai")
-        return None
-    except Exception as e:
-        print(f"❌ Error calling Ollama: {str(e)}")
-        return None
+def _call_ollama(
+    prompt: str,
+    model: Optional[str] = None,
+    *,
+    profile: Optional[LLMProfile] = None,
+) -> Optional[str]:
+    """Call the deterministic Ollama client with the given prompt."""
+    active_profile = profile or LOCAL_PLANNER
+    return run_ollama(prompt, profile=active_profile, model=model)
 
 
 def _parse_json_from_response(response: str) -> Optional[Dict]:
@@ -251,14 +234,41 @@ Today's date: {datetime.date.today()}
 
 Your job: Classify this request into ONE of these action types:
 
-1. LOCAL_ANSWER: ONLY for pure reasoning/math/text operations (no external data or tools)
-   Examples: "what is 5+5?", "translate hello to Spanish", "define recursion", "reverse text"
-   ⚠️  Use this RARELY! Most tasks need workflows.
+1. LOCAL_ANSWER: ONLY if ENTIRE request is pure reasoning/math/text (no external data)
+   Examples: "what is 5+5?", "translate hello to Spanish", "define recursion"
+   If ANY part needs external data → use WORKFLOW_EXECUTION instead
 
 2. WORKFLOW_EXECUTION: Any task requiring external data, APIs, files, or system interaction
    Examples: "check my emails", "schedule a meeting", "merge PDFs", "scrape website", "read file"
-   ✅ When in doubt, choose WORKFLOW_EXECUTION - we can generate new workflows if needed!
-   ✅ Even if no matching category exists, we can create one (system, web, file, etc.)
+   For MIXED requests (e.g., "search X then compute Y"): Use WORKFLOW_EXECUTION with separate steps
+   - Each step will be evaluated independently to see if it needs workflows or can be computed locally
+
+CRITICAL STEP BREAKDOWN RULE:
+When request mentions N items (3 emails, 5 tasks, etc.), you MUST create N+1 steps:
+- Step 1: Retrieve/list the N items
+- Steps 2 to N+1: One individual action per item
+
+Example: "reply to 5 emails" MUST become 6 steps:
+1. "Retrieve last 5 emails"
+2. "Reply to email 1"
+3. "Reply to email 2"
+4. "Reply to email 3"
+5. "Reply to email 4"
+6. "Reply to email 5"
+
+WRONG: ["Retrieve emails", "Reply to all"] ❌
+RIGHT: ["Retrieve emails", "Reply to email 1", "Reply to email 2", ...] ✓
+
+IMPORTANT:
+- For LOCAL_ANSWER: Provide the answer directly, leave categories/steps empty
+- For WORKFLOW_EXECUTION: Break into ATOMIC steps (one action, one item per step!)
+- Workflows return complete data - don't add steps to "extract" or "retrieve" specific fields
+- Example: "find restaurants with phone numbers" → Just ["Search for restaurants with contact info"]
+- Example: "search then do math" → ["Search for X", "Compute Y"] (2 independent steps, not sequential!)
+- Don't create "present" or "format" steps at the end
+- needs_sequential=true ONLY if step B needs output from step A
+- needs_sequential=false if steps are independent (search + math don't depend on each other)
+- Only list categories that are ACTUALLY needed
 
 Respond with ONLY valid JSON (no markdown):
 {{
@@ -275,36 +285,10 @@ Respond with ONLY valid JSON (no markdown):
   "reasoning": "Brief explanation of the strategy"
 }}
 
-CRITICAL STEP BREAKDOWN RULES:
-❓ Ask yourself: "Can this be done in ONE command, or must I break it into MULTIPLE atomic steps?"
-
-Examples of CORRECT step breakdown:
-✓ "analyze my last 3 emails" → Break into SEPARATE steps:
-  ["Retrieve last 3 emails", "Analyze email 1", "Analyze email 2", "Analyze email 3"]
-  
-✓ "reply to urgent emails" → Break into SEPARATE steps:
-  ["List recent emails", "Check email 1 urgency", "Check email 2 urgency", "Reply to urgent one"]
-
-✓ "check 5 emails and summarize them" → Break into SEPARATE steps:
-  ["List 5 emails", "Summarize email 1", "Summarize email 2", "Summarize email 3", "Summarize email 4", "Summarize email 5"]
-
-✗ WRONG: "analyze 3 emails" → ["Get emails", "Analyze all emails"] ❌ Too broad!
-✗ WRONG: "summarize emails" → ["Summarize emails"] ❌ Not atomic!
-
-RULE: If the request mentions a NUMBER (3 emails, 5 tasks, etc.), create that many SEPARATE steps!
-RULE: Each step should be ONE atomic action that can be executed with ONE command.
-RULE: Commands typically process ONE item at a time, so create one step per item.
-
-IMPORTANT:
-- For LOCAL_ANSWER: Provide the answer directly, leave categories/steps empty
-- For WORKFLOW_EXECUTION: Break into ATOMIC steps (one action per step!)
-- needs_sequential=true if steps depend on each other's results
-- needs_sequential=false if steps can run independently
-- Only list categories that are ACTUALLY needed for the task
-
 JSON only:"""
 
     response = _call_ollama(prompt)
+    print(f"\n[Classification Response]: {response}\n")
     parsed = _parse_json_from_response(response)
     
     if not parsed:
@@ -378,11 +362,21 @@ AVAILABLE COMMANDS (from categories: {', '.join(categories)}):
 
 Today's date: {datetime.date.today()}
 
-Your task: Determine how to execute this step.
+Your task: Determine how to execute this step, and generate more steps if you cannot execute it in a single step"
+
+CRITICAL RULES:
+1. LOCAL_ANSWER: Pure reasoning, math, logic, text analysis that needs no external data/tools
+2. EXECUTE_COMMAND: If a matching command exists and step is atomic (one action, one item)
+3. NEEDS_EXPANSION: If step needs breakdown (e.g., "Reply to 5 emails" → 5 separate reply steps)
+4. NEEDS_NEW_WORKFLOW: If no existing command can do this task
+
+IMPORTANT: Before choosing EXECUTE_COMMAND, check if the step can be done with LOCAL_ANSWER!
+Examples: Simple math, text manipulation, translations can be computed directly
+
 
 Respond with ONLY valid JSON (no markdown):
 {{
-  "action_type": "LOCAL_ANSWER" | "EXECUTE_COMMAND" | "NEEDS_NEW_WORKFLOW",
+  "action_type": "LOCAL_ANSWER" | "EXECUTE_COMMAND" | "NEEDS_NEW_WORKFLOW" | "NEEDS_EXPANSION",
   
   "local_answer": "direct answer (only if action_type=LOCAL_ANSWER)",
   
@@ -396,58 +390,52 @@ Respond with ONLY valid JSON (no markdown):
     "gpt_prompt": "Detailed natural language instructions for GPT about what this workflow should do, including parameter types (URL vs path, etc.), expected behavior, and context about the user's intent"
   }},
   
+  "expanded_steps": ["step 1", "step 2", "step 3"],
+  
   "reasoning": "Why you chose this action"
 }}
 
-CRITICAL RULES:
-1. LOCAL_ANSWER: Only if you can answer with pure reasoning (math, logic, text analysis)
-2. EXECUTE_COMMAND: If a matching command exists in the available commands
-3. NEEDS_NEW_WORKFLOW: If no existing command can do this task
-
 For EXECUTE_COMMAND:
-- Use EXACT syntax from available commands above
-- Use REAL message IDs from "Available Context" (e.g., mail:last_message_ids)
-- ONE command per step - do NOT try to batch multiple commands
-- If you need to process multiple items, use ONE ID at a time
-- NEVER use placeholder IDs like "id:1" or "id:2" - use actual IDs like "id:199e85d5b5b09017"
-- NEVER use invalid syntax like [words:100] - check command reference for correct syntax
+- Use EXACT syntax: namespace:action param1:value param2:"quoted value"
+- DO NOT use function syntax with parentheses: namespace:action(param:value)
+- Use REAL IDs from "Available Context" (e.g., id:199e85d5b5b09017, NOT id:1)
+- CRITICAL QUOTING RULES:
+  * ALL parameter values containing spaces, punctuation, or special characters MUST be quoted with double quotes
+  * Examples of CORRECT quoting:
+    - title:"Meeting with John Smith"
+    - body:"Thank you for your message. I will follow up soon."
+    - subject:"Importance of Physical Activity"
+    - to:"user@example.com"
+  * Examples of WRONG (will fail):
+    - title:Meeting with John Smith
+    - body:Thank you for your message
+    - subject:Importance of Physical Activity
+  * Single-word values and numbers can be unquoted: count:5 duration:60 id:abc123
+- CORRECT full examples:
+  * calendar:create title:"Team Meeting" start:"2025-10-17T16:30:00" duration:60
+  * mail:reply id:199e85d5b5b09017 body:"Thank you for your message. I will respond soon."
+  * mail:draft to:"me@gmail.com" subject:"Physical Activity" body:"Exercise is important for health."
+- ✅ COMMAND CHAINING SUPPORTED (use && to chain multiple commands):
+  * When step requires same action on multiple items, CHAIN THEM with &&
+  * Example: mail:download id:abc123 && mail:download id:def456 && mail:download id:xyz789
+  * Example: mail:summarize id:abc123 words:50 && mail:summarize id:def456 words:50
+  * Example: mail:view id:msg1 && mail:view id:msg2 && mail:view id:msg3
+  * Benefits: More efficient, completes entire step in one execution
+  * Each command in chain uses same syntax rules (proper quoting!)
+  * Use NEEDS_EXPANSION only if logic between commands is complex or different
+- Prefer chaining when doing same action on multiple items from context
 
-EXAMPLES OF CORRECT COMMANDS (when context has mail:last_message_ids: ["MSG123", "MSG456"]):
-✓ CORRECT: mail:summarize id:MSG123
-✗ WRONG: mail:summarize id:1
-✗ WRONG: mail:summarize id:MSG123 id:MSG456 (can only do one at a time)
-✗ WRONG: mail:summarize id:MSG123 [words:100] (invalid syntax)
+For NEEDS_EXPANSION:
+- Use when current step is too broad and needs breakdown into atomic actions
+- Create one sub-step per item (e.g., "Reply to email 1", "Reply to email 2", etc.)
+- Use context to determine exact number of items available
+- Each expanded step should be executable with ONE command
 
 For NEEDS_NEW_WORKFLOW:
-❓ CRITICAL DECISION: Can an existing command ACTUALLY complete this specific task?
-
-Check the command's Description AND Parameters to understand what it REALLY does:
-- If command says "scan directory" but you need to "read file contents" → NEEDS_NEW_WORKFLOW
-- If command says "list emails" but you need to "analyze sentiment" → NEEDS_NEW_WORKFLOW  
-- If command says "navigate files" but you need to "scrape web page" → NEEDS_NEW_WORKFLOW
-- If command accepts "path" but you need to process "URL" → NEEDS_NEW_WORKFLOW
-
-Examples when to request new workflow:
-✓ Task: "count lines in Python files"
-  Available: system:scan_directory (only lists files, doesn't read contents)
-  → NEEDS_NEW_WORKFLOW: system:count_lines_in_files
-  
-✓ Task: "fetch HTML from URL"
-  Available: system:read_file (only reads local files, not web URLs)
-  → NEEDS_NEW_WORKFLOW: system:fetch_html_from_url
-
-✗ Task: "list files in directory"
-  Available: system:scan_directory (lists files and directories)
-  → EXECUTE_COMMAND: system:scan_directory
-
-When requesting new workflow:
-- Suggest appropriate namespace from categories: {', '.join(categories)}
-- IMPORTANT: Include "gpt_prompt" - a detailed natural language description for GPT
-  - Explain the user's intent clearly
-  - Specify what inputs/parameters the workflow needs
-  - Mention expected output format
-  - Include any important context (e.g., "This is for web scraping, not file navigation")
-  - Example: "Create a workflow to fetch and parse HTML from a web URL. It should accept a 'url' parameter (not a file path), make an HTTP request to that URL, parse the HTML content, and extract specific elements like title, headings, or links. This is for web scraping tasks."
+- Check if existing command's description AND parameters match your specific task
+- If command does something different (scan vs read, local vs URL), request new workflow
+- Suggest namespace from: {', '.join(categories)}
+- Include "gpt_prompt" with: user intent, required parameters, expected output, important context
 
 JSON only:"""
 
@@ -466,6 +454,14 @@ JSON only:"""
         return StepExecutionPlan(
             can_execute=True,
             local_answer=parsed.get("local_answer", ""),
+            reasoning=parsed.get("reasoning", "")
+        )
+    
+    if action_type == "NEEDS_EXPANSION":
+        return StepExecutionPlan(
+            can_execute=False,
+            needs_expansion=True,
+            expanded_steps=parsed.get("expanded_steps", []),
             reasoning=parsed.get("reasoning", "")
         )
     
