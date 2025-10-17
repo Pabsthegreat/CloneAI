@@ -224,13 +224,18 @@ def classify_request(user_request: str) -> ClassificationResult:
     available_categories = _get_available_categories()
     categories_text = ", ".join(available_categories)
     
+    current_time = datetime.datetime.now().astimezone()
+    tz_name = current_time.tzname() or "Local"
+    tz_offset = current_time.strftime('%z')  # e.g., +0530
+    tz_offset_formatted = f"{tz_offset[:3]}:{tz_offset[3:]}" if len(tz_offset) >= 5 else tz_offset
+    
     prompt = f"""You are a task classifier for CloneAI. Analyze the request and determine the execution strategy.
 
 USER REQUEST: "{user_request}"
 
 AVAILABLE COMMAND CATEGORIES: {categories_text}
 
-Today's date: {datetime.date.today()}
+Current date and time: {current_time.strftime('%A, %B %d, %Y at %I:%M %p')} {tz_name} (UTC{tz_offset_formatted})
 
 Your job: Classify this request into ONE of these action types:
 
@@ -353,6 +358,11 @@ def plan_step_execution(
     if memory:
         memory_text = f"\n\nWORKFLOW MEMORY:\n{memory.get_summary()}"
     
+    current_time = datetime.datetime.now().astimezone()
+    tz_name = current_time.tzname() or "Local"
+    tz_offset = current_time.strftime('%z')  # e.g., +0530
+    tz_offset_formatted = f"{tz_offset[:3]}:{tz_offset[3:]}" if len(tz_offset) >= 5 else tz_offset
+    
     prompt = f"""You are a step executor for CloneAI. Execute a single workflow step.
 
 CURRENT STEP: "{current_step_instruction}"
@@ -361,7 +371,7 @@ CURRENT STEP: "{current_step_instruction}"
 AVAILABLE COMMANDS (from categories: {', '.join(categories)}):
 {commands_text}
 
-Today's date: {datetime.date.today()}
+Current date and time: {current_time.strftime('%A, %B %d, %Y at %I:%M %p')} {tz_name} (UTC{tz_offset_formatted})
 
 Your task: Determine how to execute this step, and generate more steps if you cannot execute it in a single step"
 

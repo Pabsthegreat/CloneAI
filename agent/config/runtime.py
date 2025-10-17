@@ -96,7 +96,7 @@ LOCAL_COMMAND_CLASSIFIER = LLMProfile(
 
 LOCAL_PLANNER = LLMProfile(
     model=_get_env("CLAI_PLANNER_MODEL", "qwen3:4b-instruct"),
-    timeout_seconds=int(_get_env("CLAI_PLANNER_TIMEOUT", "30")),
+    timeout_seconds=int(_get_env("CLAI_PLANNER_TIMEOUT", "60")),
     temperature=float(
         _get_env_chain(
             "CLAI_PLANNER_TEMPERATURE",
