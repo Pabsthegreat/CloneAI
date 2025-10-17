@@ -710,6 +710,138 @@ clai do "calendar:list next 20"
 
 ---
 
+## Web Search Commands
+
+CloneAI provides built-in web search capabilities powered by Serper API. Use these commands to find current information, statistics, news, and more.
+
+> 📌 NOTE: Web search requires Serper API credentials. Configure your API key in `agent/tools/serper_credentials.py` or set the `SERPER_API_KEY` environment variable.
+
+### Search the Web
+
+Perform intelligent web searches with automatic mode and field selection:
+
+```bash
+# Basic search
+clai do "search:web query:\"latest AI news\""
+
+# Search with custom number of results
+clai do "search:web query:\"Python tutorials\" num_results:5"
+
+# Current events and statistics
+clai do "search:web query:\"Ayodhya temple footfall 2025\""
+
+# Find places
+clai do "search:web query:\"restaurants near me\""
+
+# Image search (LLM auto-selects mode)
+clai do "search:web query:\"cute puppies\""
+
+# News search (LLM auto-selects mode)
+clai do "search:web query:\"tech news today\""
+```
+
+**How it works:**
+- The LLM analyzes your query and automatically selects the best search mode (search, news, images, places, videos, etc.)
+- Returns formatted results with relevant fields (title, link, snippet, date, etc.)
+- Supports 10+ different Serper search modes
+
+**Search output example:**
+```
+🔍 Web Search Results
+Mode: news
+
+================================================================================
+
+1. AI Video Models Transform Content Creation
+   Source: The Economist
+   Date: 2025-10-15
+   URL: https://economist.com/ai-video-models
+   Snippet: New AI video generation models are revolutionizing...
+--------------------------------------------------------------------------------
+
+2. Gen AI Trust Issues Persist in Enterprise
+   Source: Fortune
+   Date: 2025-10-14
+   URL: https://fortune.com/gen-ai-trust
+   Snippet: Despite advances, companies struggle with AI adoption...
+--------------------------------------------------------------------------------
+
+[... more results ...]
+================================================================================
+```
+
+### Deep Search with Content Extraction
+
+Extract and synthesize content from webpages for comprehensive answers:
+
+```bash
+# Deep search for detailed information
+clai do "search:deep query:\"Python tutorial basics\" num_results:2"
+
+# Extract statistics from multiple sources
+clai do "search:deep query:\"Ayodhya temple statistics 2025\""
+
+# Research with content synthesis
+clai do "search:deep query:\"latest AI developments\" num_results:5"
+
+# Limit synthesized answer length
+clai do "search:deep query:\"climate change effects\" max_words:500"
+```
+
+**How it works:**
+1. Performs web search to find relevant pages
+2. Fetches actual webpage content using BeautifulSoup4
+3. Extracts main text content (removes ads, navigation, etc.)
+4. Uses LLM to synthesize a comprehensive answer from all extracted content
+
+**Deep search output example:**
+```
+🔍 Deep Search: Python tutorial basics
+
+📥 Fetching content from 2 pages...
+
+   1. https://docs.python.org/3/tutorial/
+      ✓ Extracted 2,450 words
+      
+   2. https://www.w3schools.com/python/
+      ✓ Extracted 1,820 words
+
+🤖 Synthesizing answer from 4,270 words...
+
+================================================================================
+
+📝 Comprehensive Answer:
+
+Python is a high-level, interpreted programming language known for its
+simplicity and readability. The official Python tutorial covers fundamental
+concepts including:
+
+**Basic Syntax:**
+- Variables and data types (strings, integers, lists, dictionaries)
+- Control flow (if statements, for/while loops)
+- Functions and modules
+
+**Key Commands:**
+- print(): Display output
+- input(): Get user input  
+- len(): Get length of objects
+- type(): Check data type
+- help(): Get documentation
+
+**Essential Concepts:**
+- Indentation matters (defines code blocks)
+- Dynamic typing (no variable declarations needed)
+- Lists and dictionaries are core data structures
+- Modules extend functionality (import statement)
+
+Both sources emphasize Python's "batteries included" philosophy with
+extensive standard library support...
+
+================================================================================
+```
+
+---
+
 ## Document Utilities
 
 CloneAI provides powerful document management tools for merging and converting files.
@@ -956,6 +1088,93 @@ The `reauth` command will:
 1. Delete authentication tokens
 2. Show which tokens were deleted
 3. Provide clear next steps to complete re-authentication
+```
+
+---
+
+## ⚡ Command Chaining
+
+Execute multiple commands in sequence using the `&&` operator for faster, more efficient operations.
+
+### Basic Chaining
+
+Chain multiple commands together to execute them sequentially:
+
+```bash
+# Download attachments from multiple emails
+clai do "mail:download id:abc123 && mail:download id:def456 && mail:download id:xyz789"
+
+# View multiple calendar events
+clai do "calendar:view id:evt1 && calendar:view id:evt2 && calendar:view id:evt3"
+
+# Summarize multiple emails
+clai do "mail:summarize id:msg1 words:50 && mail:summarize id:msg2 words:50"
+```
+
+### Benefits
+
+- **3-10x Faster**: Execute multi-item operations in one command
+- **Token Savings**: 50-75% fewer LLM calls for complex operations
+- **Cleaner Output**: Consolidated results in a single response
+- **Sequential Execution**: Commands execute in order, one after another
+
+### How It Works
+
+```bash
+# Single command (original behavior)
+clai do "mail:view id:123"
+
+# Chained commands (NEW)
+clai do "mail:view id:123 && mail:view id:456 && mail:view id:789"
+```
+
+**Execution flow:**
+1. Command is split by `&&` operator
+2. Each command is executed sequentially
+3. Results are collected and formatted
+4. Combined output is displayed
+
+**Example output:**
+```
+Command 1 result:
+📧 Email from: john@example.com
+Subject: Meeting Tomorrow
+...
+
+Command 2 result:
+📧 Email from: support@company.com
+Subject: Ticket Resolved
+...
+
+Command 3 result:
+📧 Email from: github@noreply.com
+Subject: Pull Request Merged
+...
+```
+
+### Best Practices
+
+**✅ Good use cases for chaining:**
+- Same operation on multiple items (download 3 attachments)
+- Sequential viewing/checking of multiple resources
+- Batch processing of known items
+
+**❌ When NOT to use chaining:**
+- Commands with complex dependencies (use `clai auto` instead)
+- When you need conditional logic between commands
+- When later commands depend on output of earlier ones
+
+### Integration with Auto Workflows
+
+The `clai auto` command automatically uses chaining when appropriate:
+
+```bash
+# This will automatically chain commands
+clai auto "download attachments from my last 3 emails from john@example.com"
+
+# Behind the scenes:
+# Step 1: mail:list sender:john@example.com last 3
+# Step 2: mail:download id:msg1 && mail:download id:msg2 && mail:download id:msg3
 ```
 
 ---

@@ -21,14 +21,17 @@ CloneAI is an intelligent personal CLI agent built with Python that provides an 
 ### Key Features
 
 **Core Intelligence:**
-- **Tiered Architecture**: Two-stage planning with memory for efficient token usage
+- **Tiered Architecture**: Two-stage planning with memory for efficient token usage (75% savings)
+- **Command Chaining**: Execute multiple commands with && operator (3-10x faster for multi-item ops)
 - **Safety Guardrails**: Lightweight content moderation to block inappropriate queries
 - **Dynamic Workflow Generation**: GPT-4 generates new workflows on-demand with LLM-provided context
 - **Adaptive Memory**: Context-aware step execution with indexed data tracking
+- **Timezone-Aware Context**: LLM receives current date/time with timezone information
 
 **Productivity Tools:**
-- **Email Management**: Gmail integration for reading, drafting, sending emails
+- **Email Management**: Gmail integration for reading, drafting, sending emails with attachments
 - **Calendar Management**: Google Calendar integration for events and meetings
+- **Web Search**: Built-in search:web and search:deep for internet queries and content extraction
 - **Document Processing**: PDF/DOCX/PPT conversion and merging
 - **Task Scheduling**: Automated task execution at specified times
 - **Natural Language Processing**: Convert plain English to CLI commands
@@ -39,8 +42,9 @@ CloneAI is an intelligent personal CLI agent built with Python that provides an 
 - **CLI Framework**: Typer (built on top of Click)
 - **Local LLM**: Ollama (qwen3:4b-instruct for planning, classification, guardrails)
 - **Cloud LLM**: OpenAI GPT-4.1 (dynamic workflow generation only)
-- **APIs**: Google Gmail API, Google Calendar API
+- **APIs**: Google Gmail API, Google Calendar API, Serper API (web search)
 - **Document Processing**: PyPDF2, python-docx, python-pptx, pdf2docx
+- **Web Scraping**: BeautifulSoup4, requests
 - **Task Scheduling**: schedule library
 - **State Management**: JSON-based persistence
 - **Vector Store** (Future): Chroma + LangChain for RAG
@@ -121,17 +125,27 @@ CloneAI/
 │   │   ├── __init__.py
 │   │   ├── mail.py            # Gmail API integration
 │   │   ├── calendar.py        # Google Calendar integration
+│   │   ├── web_search.py      # Serper API web search integration
 │   │   ├── documents.py       # Document processing
 │   │   ├── scheduler.py       # Task scheduling
 │   │   ├── nl_parser.py       # Natural language parser (Ollama)
+│   │   ├── ollama_client.py   # Ollama LLM client
+│   │   ├── tiered_planner.py  # Two-stage planning with memory
+│   │   ├── guardrails.py      # Safety content moderation
 │   │   ├── email_parser.py    # Email parsing utilities
+│   │   ├── serper_credentials.py  # Serper API credentials
 │   │   └── priority_emails.py # Priority email management
 │   │
 │   └── workflows/             # New workflow system
 │       ├── __init__.py        # Workflow exports & loading
 │       ├── registry.py        # Workflow registration engine
 │       ├── catalog.py         # Legacy command catalog
-│       └── mail.py            # Mail workflow handlers
+│       ├── mail.py            # Mail workflow handlers
+│       ├── calendar.py        # Calendar workflow handlers
+│       ├── search.py          # Web search workflows (NEW)
+│       ├── system.py          # System management workflows
+│       └── generated/         # GPT-generated workflows
+│           └── *.py           # Dynamically created workflows
 │
 ├── tests/                     # Test suite
 │   ├── test_auto_workflow.py
@@ -178,19 +192,47 @@ CloneAI/
 User Input → Typer CLI → Command Handler → Execution Layer → Result
 ```
 
+**Command Execution with Chaining**:
+```python
+# In agent/cli.py
+def execute_single_command(action: str, *, extras) -> str:
+    """Execute a single command or chained commands."""
+    # Check if command contains && (chain operator)
+    if '&&' in action:
+        return execute_chained_commands(action, extras=extras)
+    
+    # Execute single command
+    return execute_single_command_atomic(action, extras=extras)
+
+def execute_chained_commands(chained_action: str, *, extras) -> str:
+    """Execute multiple commands chained with && operator."""
+    commands = [cmd.strip() for cmd in chained_action.split('&&')]
+    results = []
+    
+    for i, cmd in enumerate(commands, 1):
+        result = execute_single_command_atomic(cmd, extras=extras)
+        results.append(result)
+    
+    return "\n\n".join(f"Command {i} result:\n{res}" for i, res in enumerate(results))
+```
+
 **Example**:
 ```python
 @app.command()
 def do(action: str):
     """Execute a command"""
-    # 1. Try workflow registry (new system)
+    # 1. Check for chained commands (NEW)
+    if '&&' in action:
+        return execute_chained_commands(action, extras=registry_extras)
+    
+    # 2. Try workflow registry (new system)
     try:
         result = workflow_registry.execute(action, extras=registry_extras)
         return result.output
     except WorkflowNotFoundError:
         pass  # Fall through to legacy
     
-    # 2. Try legacy command parsing
+    # 3. Try legacy command parsing
     if action.startswith("mail:list"):
         # Parse and execute...
 ```

@@ -55,7 +55,8 @@ CloneAI will automatically detect your system and display: `System: Windows (x86
 - 🤖 **Natural Language Commands** - Use plain English to control CloneAI (powered by Ollama)
   - 🗣️ **Interpret Mode** - Convert natural language to commands: `clai interpret "show my emails"`
   - ✍️ **AI Email Drafting** - Generate professional emails: `clai draft-email "write to john@example.com"`
-  - � **Multi-Step Workflows** - Automate email replies: `clai auto "check my last 3 emails and reply"`
+  - ⚡ **Multi-Step Workflows** - Automate email replies: `clai auto "check my last 3 emails and reply"`
+  - � **Command Chaining** - Execute multiple commands efficiently with `&&` operator
 - �📧 **Email Management** - List, search, create drafts, send emails with attachments
   - 🎯 **Priority Email Buckets** - Filter emails from important senders/domains
   - 👁️ **View Full Emails** - See complete email body and content
@@ -64,10 +65,12 @@ CloneAI will automatically detect your system and display: `System: Windows (x86
 - 📅 **Calendar Integration** - Create and list Google Calendar events
   - 🔍 **Auto-Meeting Detection** - Scan emails for meeting invites and add to calendar
   - 📨 **Send Meeting Invites** - Create and send meeting invitations with links
+- 🔍 **Web Search** - Built-in search capabilities with content extraction
+  - 🌐 **search:web** - Adaptive web search with LLM-driven mode selection
+  - � **search:deep** - Extract and synthesize content from webpages
 - ⏰ **Task Scheduler** - Run commands automatically at specific times daily
-- 🔗 **Cascading Commands** - Chain multiple commands with `&&`
 - 📄 **Document Utilities** - Merge PDFs/PPTs, convert between formats (PDF↔DOCX, PPT→PDF)
-- 💬 **AI Chat** - Interactive conversations with your assistant  
+- 💬 **AI Chat** - Interactive conversations with your assistant (timezone-aware)
 - 📝 **Command History** - Automatically tracks last 100 commands
 - 🔧 **Extensible** - Easy to add new tools and integrations
 - 🔒 **Private** - Runs locally on your machine (requires Ollama for AI features)
@@ -93,6 +96,10 @@ clai auto "check my last 3 emails and reply to them"   # Automated workflow
 clai hi                              # Interactive greeting
 clai chat "help me organize tasks"   # Direct chat
 
+# Web Search (NEW)
+clai do "search:web query:\"latest AI news\" num_results:5"  # Web search
+clai do "search:deep query:\"Python tutorial basics\""        # Deep search with content extraction
+
 # Email features
 clai do "mail:list last 5"           # Recent emails
 clai do "mail:view id:MESSAGE_ID"    # View full email
@@ -106,16 +113,18 @@ clai do "mail:priority-add boss@company.com"    # Add priority sender
 clai do "mail:priority-add @company.com"        # Add priority domain
 
 # Calendar features
-clai do "calendar:create title:Meeting start:2025-10-15T14:00:00 duration:60"
+clai do "calendar:create title:\"Team Meeting\" start:2025-10-15T14:00:00 duration:60"
 clai do "calendar:list next 5"       # Next 5 events
-clai do "mail:invite to:user@test.com subject:Sync time:2025-10-15T14:00:00"
+clai do "mail:invite to:user@test.com subject:\"Sync\" time:2025-10-15T14:00:00"
 
 # Scheduled tasks
-clai do "task:add name:Check Email command:mail:priority time:09:00"
+clai do "task:add name:\"Check Email\" command:\"mail:priority\" time:09:00"
 clai do "tasks"                      # List all tasks
 clai scheduler start                 # Start scheduler daemon
 
-# Cascading commands
+# Command Chaining (NEW)
+clai do "mail:view id:msg1 && mail:view id:msg2 && mail:view id:msg3"
+clai do "mail:download id:abc && mail:download id:def && mail:download id:xyz"
 clai do "mail:priority && mail:scan-meetings && calendar:list"
 
 # Document utilities
@@ -138,7 +147,9 @@ clai reauth gmail                    # Re-auth Gmail only
 - **Windows:** PowerShell 5.1+ or PowerShell Core 7+
 - **macOS/Linux:** Bash, Zsh, or Fish shell
 - Gmail API credentials (for email features)
+- Serper API key (for web search features)
 - Internet connection for Google API authentication
+- Ollama (for AI/natural language features)
 
 ## 📂 Project Structure
 
