@@ -213,6 +213,7 @@ class GPTWorkflowGenerator:
             "tasks": "SCHEDULER COMMANDS",
             "doc": "DOCUMENT COMMANDS",
             "convert": "DOCUMENT COMMANDS",
+            "image": "IMAGE COMMANDS",
             "merge": "DOCUMENT COMMANDS",
             "system": "GENERAL COMMANDS",
             "web": "WEB COMMANDS",
@@ -262,8 +263,29 @@ IMPORTANT - Correct import paths for common tools:
   - Documents: from agent.tools.documents import DocumentManager
   - LLM/AI: from agent.tools.ollama_client import run_ollama
   - NL Parser: from agent.tools.nl_parser import parse_natural_language, call_ollama
+  - Image Generation: from agent.tools.image_generation import generate_image
+  - Do not create workflows specific a single file. 
 
 ⚠️  NOTE: There is NO 'agent.tools.search' module - use 'agent.tools.web_search' instead!
+
+⚠️  LLM USAGE - run_ollama() function:
+  - Correct: run_ollama(prompt, profile=LOCAL_PLANNER) or run_ollama(prompt, profile=LOCAL_COMMAND_CLASSIFIER)
+  - Import profile: from agent.config.runtime import LOCAL_PLANNER, LOCAL_COMMAND_CLASSIFIER
+  - DO NOT use format="json" parameter - it doesn't exist!
+  - Instead, ask for JSON in the prompt text itself
+
+⚠️  FILE SAVING - Use pathlib, NOT DocumentManager:
+  - For saving files (PDFs, PPTX, images, etc.), save directly to artifacts/ folder
+  - Pattern:
+    ```python
+    import pathlib
+    artifacts_dir = pathlib.Path.cwd() / "artifacts"
+    artifacts_dir.mkdir(exist_ok=True)
+    file_path = artifacts_dir / filename
+    # ... save to file_path ...
+    ```
+  - DO NOT use DocumentManager, temp files, or upload methods
+  - DO NOT use tempfile.TemporaryDirectory() for final output
 """
         
         tool_section = tool_imports + "\n" + ("\n".join(tool_hints[:3]) if tool_hints else "(search agent/tools for helpers)")
@@ -319,6 +341,20 @@ Requirements:
 - DO NOT generate tests
 - ⚠️  VERIFY all imports exist! Check the "Available tools" section for correct module paths
 - Common mistake: using 'agent.tools.search' (WRONG) instead of 'agent.tools.web_search' (CORRECT)
+- ⚠️  FILE PATH HANDLING: When working with files (reading/writing/modifying):
+  * CloneAI saves created files in 'artifacts/' folder by default
+  * If file path is just a filename (e.g., "file.pptx"), check both current directory AND artifacts/ folder
+  * Use this pattern for file existence checks:
+    ```python
+    import pathlib
+    if not os.path.isfile(file_path):
+        artifacts_path = pathlib.Path.cwd() / "artifacts" / file_path
+        if artifacts_path.exists():
+            file_path = str(artifacts_path)
+        else:
+            return f"Error: File '{{file_path}}' not found"
+    ```
+  * This ensures workflows can find files created by other CloneAI commands
 
 Correct pattern:
 ```python

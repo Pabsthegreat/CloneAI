@@ -118,12 +118,12 @@ class StepExecutionPlan:
 def _get_available_categories() -> List[str]:
     """Get list of all available command categories from registry."""
     categories = set()
-    for spec in workflow_registry.list(namespace=None):
+    for spec in workflow_registry.list():
         if spec.namespace:
             categories.add(spec.namespace)
     
     # Add known categories even if no workflows registered yet
-    known_categories = ["mail", "calendar", "task", "tasks", "doc", "convert", "merge", "system", "math", "text"]
+    known_categories = ["mail", "calendar", "task", "tasks", "doc", "convert", "merge", "system", "math", "text", "image"]
     categories.update(known_categories)
     
     return sorted(list(categories))
@@ -234,6 +234,17 @@ def classify_request(user_request: str) -> ClassificationResult:
 USER REQUEST: "{user_request}"
 
 AVAILABLE COMMAND CATEGORIES: {categories_text}
+
+CATEGORY GUIDANCE:
+- mail: Email operations (list, send, reply, draft, download attachments)
+- calendar: Calendar/meeting management (create, list, update events)
+- image: Image generation (create/generate images from text descriptions)
+- search: Web search (find information, current data, news, research)
+- doc: Document operations (merge PDFs, convert formats)
+- system: System commands (file operations, shell commands)
+- task/tasks: Task management
+- text: Text processing
+- math: Mathematical calculations
 
 Current date and time: {current_time.strftime('%A, %B %d, %Y at %I:%M %p')} {tz_name} (UTC{tz_offset_formatted})
 
@@ -438,6 +449,14 @@ For EXECUTE_COMMAND:
   * mail:draft to:"me@gmail.com" subject:"Physical Activity" body:"Exercise is important for health."
   * search:web query:"latest AI news" num_results:5
   * search:deep query:"Ayodhya temple statistics" num_results:3
+- ⚠️ FILE PATH RULES:
+  * Files created by CloneAI are saved in the 'artifacts/' folder by default
+  * When referencing files created in previous steps, use JUST the filename (not full path)
+  * Examples:
+    - If step 1 created "diwali.pptx" → later steps use: presentation:diwali.pptx (NOT artifacts/diwali.pptx)
+    - If step 1 created "report.pdf" → later steps use: file:report.pdf (NOT artifacts/report.pdf)
+  * Workflows will automatically check artifacts/ folder if file not found in current directory
+  * Only use full paths when user explicitly provides them or for system files
 - ✅ COMMAND CHAINING SUPPORTED (use && to chain multiple commands):
   * When step requires same action on multiple items, CHAIN THEM with &&
   * Example: mail:download id:abc123 && mail:download id:def456 && mail:download id:xyz789
