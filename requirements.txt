@@ -10,7 +10,7 @@ charset-normalizer==3.4.3
 click==8.3.0
 colorama==0.4.6
 coloredlogs==15.0.1
-comtypes==1.4.1
+comtypes==1.4.13
 crccheck==1.3.1
 ctranslate2==4.6.0
 distro==1.9.0
