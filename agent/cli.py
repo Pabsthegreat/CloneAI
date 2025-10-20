@@ -16,11 +16,68 @@ from agent.config.runtime import (
     SEND_CONFIRMATION_KEYWORDS,
 )
 from agent.tools.local_compute import can_local_llm_handle
+from agent.config.autotune import apply_runtime_autotune
+from agent.voice import get_voice_manager
 
 app = typer.Typer(help="Your personal CLI agent", no_args_is_help=True)
 
-# Ensure built-in workflows are registered before commands execute.
+# Apply system-based defaults for env vars, then ensure built-ins are registered.
+try:
+    apply_runtime_autotune()
+except Exception:
+    # Non-fatal if auto-tune fails; continue with defaults
+    pass
 load_builtin_workflows()
+
+VOICE_MODE_ACTIVATE_PHRASES = (
+    "activate voice mode",
+    "start voice mode",
+    "enable voice mode",
+    "activate listening mode",
+    "start listening mode",
+    "enable listening mode",
+    "turn on voice mode",
+)
+
+VOICE_MODE_DEACTIVATE_PHRASES = (
+    "shutdown voice mode",
+    "shut down voice mode",
+    "stop voice mode",
+    "disable voice mode",
+    "deactivate voice mode",
+    "turn off voice mode",
+    "shutdown listening mode",
+    "shut down listening mode",
+    "stop listening mode",
+    "disable listening mode",
+    "deactivate listening mode",
+)
+
+
+def _detect_voice_mode_intent(instruction: str) -> Optional[str]:
+    """Return 'activate' or 'deactivate' if the instruction targets voice mode."""
+    normalized = instruction.strip().lower()
+    normalized = re.sub(r"\s+", " ", normalized)
+
+    if not normalized:
+        return None
+
+    for phrase in VOICE_MODE_DEACTIVATE_PHRASES:
+        if phrase in normalized:
+            return "deactivate"
+
+    for phrase in VOICE_MODE_ACTIVATE_PHRASES:
+        if phrase in normalized:
+            return "activate"
+
+    if "voice mode" in normalized or "listening mode" in normalized:
+        if any(keyword in normalized for keyword in ("shutdown", "shut down", "stop", "disable", "deactivate", "turn off")):
+            return "deactivate"
+        if any(keyword in normalized for keyword in ("activate", "start", "enable", "turn on")):
+            return "activate"
+
+    return None
+
 
 @app.callback()
 def show_system_info(ctx: typer.Context):
@@ -351,6 +408,21 @@ def auto(
         clai auto "schedule a meeting tomorrow at 2pm and send invites"
         clai auto --run "check calendar for today and summarize"
     """
+    voice_intent = _detect_voice_mode_intent(instruction)
+    if voice_intent == "activate":
+        typer.secho("\n🎙️  Activating conversational voice mode...", fg=typer.colors.CYAN, bold=True)
+        manager = get_voice_manager()
+        manager.activate()
+        return
+    if voice_intent == "deactivate":
+        manager = get_voice_manager()
+        if manager.is_active:
+            typer.secho("\n🛑 Shutting down voice mode...", fg=typer.colors.YELLOW)
+            manager.deactivate()
+        else:
+            typer.secho("\nℹ️  Voice mode is not currently active.", fg=typer.colors.BLUE)
+        return
+
     try:
         from agent.tools.tiered_planner import (
             classify_request,

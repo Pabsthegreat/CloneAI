@@ -57,6 +57,7 @@ CloneAI will automatically detect your system and display: `System: Windows (x86
   - ✍️ **AI Email Drafting** - Generate professional emails: `clai draft-email "write to john@example.com"`
   - ⚡ **Multi-Step Workflows** - Automate email replies: `clai auto "check my last 3 emails and reply"`
   - � **Command Chaining** - Execute multiple commands efficiently with `&&` operator
+- 🎙️ **Voice Mode** - Hands-free conversation using the `NEBULA` hotword with local Whisper transcription: `clai auto "activate voice mode"`
 - �📧 **Email Management** - List, search, create drafts, send emails with attachments
   - 🎯 **Priority Email Buckets** - Filter emails from important senders/domains
   - 👁️ **View Full Emails** - See complete email body and content
@@ -95,6 +96,13 @@ clai auto "check my last 3 emails and reply to them"   # Automated workflow
 # Basic interaction
 clai hi                              # Interactive greeting
 clai chat "help me organize tasks"   # Direct chat
+
+# Voice mode
+clai auto "activate voice mode"      # Start hands-free conversation
+clai auto "shutdown voice mode"      # Stop listening mode
+# Requires local Whisper weights (`pip install faster-whisper`) for speech recognition accuracy
+# Optional: set `CLAI_VOICE_HOTWORD=assistant` to change the trigger phrase
+# Optional: set `CLAI_VOICE_HOTWORD_ALIASES=assistant,assist` or `CLAI_WHISPER_LANGUAGE=auto` for advanced tuning
 
 # Web Search (NEW)
 clai do "search:web query:\"latest AI news\" num_results:5"  # Web search

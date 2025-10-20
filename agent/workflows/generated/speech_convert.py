@@ -55,6 +55,8 @@ def speech_convert_handler(ctx: WorkflowContext, params: Dict[str, Any]) -> str:
     accent_map = {
         'british': ['en-gb', 'english_rp', 'english', 'english - british'],
         'american': ['en-us', 'english-us', 'english - american', 'english-us'],
+        'australian': ['en-au', 'english-au', 'english - australian'],
+        'indian': ['en-in', 'english-in', 'english - indian'],
     }
     accent_keys = accent_map.get(accent, [])
     for voice in voices:

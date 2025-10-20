@@ -9,7 +9,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-
+artifacts/
 # CloneAI specific
 .clai/
 **/command_history.json

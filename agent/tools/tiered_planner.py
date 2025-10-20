@@ -235,17 +235,6 @@ USER REQUEST: "{user_request}"
 
 AVAILABLE COMMAND CATEGORIES: {categories_text}
 
-CATEGORY GUIDANCE:
-- mail: Email operations (list, send, reply, draft, download attachments)
-- calendar: Calendar/meeting management (create, list, update events)
-- image: Image generation (create/generate images from text descriptions)
-- search: Web search (find information, current data, news, research)
-- doc: Document operations (merge PDFs, convert formats)
-- system: System commands (file operations, shell commands)
-- task/tasks: Task management
-- text: Text processing
-- math: Mathematical calculations
-
 Current date and time: {current_time.strftime('%A, %B %d, %Y at %I:%M %p')} {tz_name} (UTC{tz_offset_formatted})
 
 Your job: Classify this request into ONE of these action types:
@@ -276,6 +265,8 @@ WRONG: ["Retrieve emails", "Reply to all"] ❌
 RIGHT: ["Retrieve emails", "Reply to email 1", "Reply to email 2", ...] ✓
 
 IMPORTANT:
+- For anything to do with images. image: Image generation (create/generate images from text descriptions)
+- For speech related tasks, always play the audio after generation.
 - For LOCAL_ANSWER: Provide the answer directly, leave categories/steps empty
 - For WORKFLOW_EXECUTION: Break into ATOMIC steps (one action, one item per step!)
 - Workflows return complete data - don't add steps to "extract" or "retrieve" specific fields
@@ -303,7 +294,7 @@ Respond with ONLY valid JSON (no markdown):
 }}
 
 JSON only:"""
-
+    print(prompt)
     response = _call_ollama(prompt)
     print(f"\n[Classification Response]: {response}\n")
     parsed = _parse_json_from_response(response)
