@@ -1,3 +1,0 @@
-# Security Model
-
-Full SECURITY.md content here...
