@@ -71,66 +71,53 @@ class DocumentationParser {
     }
 
     parseMarkdown(markdown) {
-        // Parse the markdown into sections based on H1 and H2 headers
+        // Parse the markdown into sections based on headers
+        // Your markdown uses ## for H1 and ### for H2
         const lines = markdown.split('\n');
-        let currentSection = null;
-        let currentSubsection = null;
         const sections = [];
-        let contentBuffer = [];
+        let inCodeBlock = false;
 
-        lines.forEach((line, index) => {
-            // H1 headers create main sections
-            if (line.startsWith('# ') && !line.startsWith('## ')) {
-                if (currentSection) {
-                    this.saveSection(sections, currentSection, contentBuffer);
-                    contentBuffer = [];
-                }
-                
-                const title = line.replace(/^#\s+/, '').trim();
-                const id = this.createId(title);
-                currentSection = { id, title, subsections: [], content: [] };
-                currentSubsection = null;
+        lines.forEach((line) => {
+            // Track code blocks to skip them
+            if (line.trim().startsWith('```')) {
+                inCodeBlock = !inCodeBlock;
+                return;
             }
-            // H2 headers create subsections
-            else if (line.startsWith('## ')) {
-                if (currentSubsection) {
-                    currentSection.subsections.push({
-                        ...currentSubsection,
-                        content: contentBuffer.join('\n')
-                    });
-                    contentBuffer = [];
-                }
-                
-                const title = line.replace(/^##\s+/, '').trim();
-                const id = this.createId(title);
-                currentSubsection = { id, title };
-                contentBuffer.push(line);
+
+            // Skip lines inside code blocks
+            if (inCodeBlock) {
+                return;
             }
-            else {
-                contentBuffer.push(line);
+
+            // Match H1 headers (## Title) - NOT preceded by #
+            const h1Match = line.match(/^##\s+([^#].+)$/);
+            if (h1Match) {
+                const title = h1Match[1].trim();
+                // Skip if title is empty or looks like a comment
+                if (title && !title.startsWith('=') && title.length > 0) {
+                    const id = this.createId(title);
+                    sections.push({ id, title, level: 1 });
+                }
+                return;
+            }
+
+            // Match H2 headers (### Title)
+            const h2Match = line.match(/^###\s+(.+)$/);
+            if (h2Match) {
+                const title = h2Match[1].trim();
+                if (title && title.length > 0) {
+                    const id = this.createId(title);
+                    sections.push({ id, title, level: 2 });
+                }
+                return;
             }
         });
 
-        // Save the last section
-        if (currentSection) {
-            this.saveSection(sections, currentSection, contentBuffer);
-        }
-
+        console.log('Parsed sections:', sections.length);
         return { sections, fullContent: markdown };
     }
 
-    saveSection(sections, section, contentBuffer) {
-        if (section.subsections.length === 0) {
-            section.content = contentBuffer.join('\n');
-        } else {
-            // Save last subsection
-            section.subsections.push({
-                ...section.subsections[section.subsections.length - 1],
-                content: contentBuffer.join('\n')
-            });
-        }
-        sections.push(section);
-    }
+
 
     createId(text) {
         return text
@@ -158,21 +145,32 @@ class NavigationManager {
     }
 
     async initialize() {
+        console.log('Initializing NavigationManager...');
         const { sections, fullContent } = await this.parser.loadMarkdown();
+        console.log('Loaded', sections.length, 'sections');
         this.sections = sections;
         this.renderNavigation();
         this.renderContent(fullContent);
         this.setupSearch();
         this.setupScrollSpy();
         this.handleHashNavigation();
+        console.log('NavigationManager initialized!');
     }
 
     renderNavigation() {
         const navSections = document.getElementById('nav-sections');
+        if (!navSections) {
+            console.error('nav-sections element not found!');
+            return;
+        }
+        
         navSections.innerHTML = '';
+
+        console.log('Rendering navigation with', this.sections.length, 'sections');
 
         // Group sections by category
         const categories = this.categorizeSection();
+        console.log('Categories:', categories);
         
         categories.forEach(category => {
             const sectionDiv = document.createElement('div');
@@ -196,8 +194,10 @@ class NavigationManager {
                 a.textContent = section.title;
                 a.addEventListener('click', (e) => {
                     e.preventDefault();
+                    console.log('Clicked:', section.id);
                     this.scrollToSection(section.id);
-                    if (window.innerWidth <= 768) {
+                    const sidebar = document.getElementById('sidebar');
+                    if (window.innerWidth <= 768 && sidebar) {
                         sidebar.classList.remove('active');
                     }
                 });
@@ -209,64 +209,26 @@ class NavigationManager {
             sectionDiv.appendChild(ul);
             navSections.appendChild(sectionDiv);
         });
+        
+        console.log('Navigation rendered successfully!');
     }
 
     categorizeSection() {
-        // Define categories based on content
-        const categories = [
-            {
-                name: 'Getting Started',
-                keywords: ['quick start', 'installation', 'setup', 'prerequisites', 'what is'],
-                items: []
-            },
-            {
-                name: 'User Guide',
-                keywords: ['commands', 'usage', 'email', 'calendar', 'document', 'natural language', 'workflow'],
-                items: []
-            },
-            {
-                name: 'Architecture',
-                keywords: ['architecture', 'system', 'components', 'flow', 'tiered', 'workflow system'],
-                items: []
-            },
-            {
-                name: 'Advanced Features',
-                keywords: ['voice', 'scheduler', 'priority', 'web search', 'generation', 'gpt'],
-                items: []
-            },
-            {
-                name: 'Development',
-                keywords: ['testing', 'security', 'implementation', 'migration', 'token'],
-                items: []
-            },
-            {
-                name: 'Reference',
-                keywords: ['troubleshooting', 'reference', 'tips', 'best practices', 'command reference'],
-                items: []
-            }
-        ];
-
-        // Categorize sections
+        // Simple approach: just show all H1 sections, grouped logically
+        const allSections = [];
+        
         this.sections.forEach(section => {
-            let categorized = false;
-            const lowerTitle = section.title.toLowerCase();
-
-            for (const category of categories) {
-                if (category.keywords.some(keyword => lowerTitle.includes(keyword))) {
-                    category.items.push(section);
-                    categorized = true;
-                    break;
-                }
-            }
-
-            // If not categorized, add to reference
-            if (!categorized) {
-                categories[categories.length - 1].items.push(section);
+            // Only show H1 level sections in nav
+            if (section.level === 1) {
+                allSections.push(section);
             }
         });
 
-        // Filter out empty categories
-        return categories.filter(cat => cat.items.length > 0);
+        // Return as a single category
+        return [{
+            name: 'Documentation',
+            items: allSections
+        }];
     }
 
     renderContent(markdown) {
@@ -400,9 +362,21 @@ class NavigationManager {
 // ========================================
 
 document.addEventListener('DOMContentLoaded', async () => {
-    const parser = new DocumentationParser();
-    const nav = new NavigationManager(parser);
-    await nav.initialize();
-    
-    console.log('📚 CloneAI Documentation loaded successfully!');
+    try {
+        console.log('Starting initialization...');
+        const parser = new DocumentationParser();
+        const nav = new NavigationManager(parser);
+        await nav.initialize();
+        console.log('📚 CloneAI Documentation loaded successfully!');
+    } catch (error) {
+        console.error('Error initializing documentation:', error);
+        const content = document.getElementById('content');
+        if (content) {
+            content.innerHTML = `<div style="padding: 20px; color: red;">
+                <h2>Error Loading Documentation</h2>
+                <p>${error.message}</p>
+                <pre>${error.stack}</pre>
+            </div>`;
+        }
+    }
 });
