@@ -15,3 +15,4 @@ artifacts/
 **/command_history.json
 **/token.pickle
 **/credentials.json
+node_modules/

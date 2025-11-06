@@ -1,8 +1,31 @@
 # CloneAI - Your Personal CLI Agent
 
-A local, permissioned personal assistant that runs in your command line. Check emails, chat with AI, and automate tasks - all from your terminal!
+A local, permissioned personal assistant that runs in your command line **or desktop app**. Check emails, chat with AI, and automate tasks!
 
 **🌍 Cross-Platform Support:** Works on Windows, macOS (including Apple Silicon), and Linux!
+
+## 🖥️ Desktop App Available!
+
+CloneAI now has a beautiful **Electron desktop app** with:
+- 💬 **Chat Interface** - Natural language interaction
+- 📧 **Email Viewer** - Formatted email cards with click-to-expand
+- 📅 **Calendar View** - Google Calendar-style event display
+- 🔄 **Data Caching** - Instant loading with refresh on demand
+- ⚡ **Auto-Start** - Launches automatically on login/wake
+
+**Quick Start Desktop App:**
+```bash
+cd /Users/adarsh/Documents/GitHub/CloneAI
+
+# Install auto-start (optional but recommended)
+./install-autostart.sh
+
+# Or start manually
+cd electron-app && npm start
+```
+
+**See:** [electron-app/README.md](electron-app/README.md) for full desktop app documentation
+**See:** [AUTOSTART.md](AUTOSTART.md) for auto-start setup
 
 ## � Complete Documentation
 

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:8765;">
+    <title>CloneAI Desktop</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Main Container -->
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <h1>🤖 CloneAI</h1>
+                <p class="version">v1.0.0</p>
+            </div>
+            
+            <nav class="nav-menu">
+                <button class="nav-item active" data-view="chat">
+                    <span class="icon">💬</span>
+                    <span class="label">Chat</span>
+                </button>
+                <button class="nav-item" data-view="emails">
+                    <span class="icon">📧</span>
+                    <span class="label">Emails</span>
+                </button>
+                <button class="nav-item" data-view="calendar">
+                    <span class="icon">📅</span>
+                    <span class="label">Calendar</span>
+                </button>
+                <button class="nav-item" data-view="workflows">
+                    <span class="icon">⚙️</span>
+                    <span class="label">Workflows</span>
+                </button>
+                <button class="nav-item" data-view="settings">
+                    <span class="icon">🔧</span>
+                    <span class="label">Settings</span>
+                </button>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="status" id="backend-status">
+                    <span class="status-dot connecting"></span>
+                    <span class="status-text">Connecting...</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Chat View -->
+            <section class="view active" id="chat-view">
+                <header class="view-header">
+                    <h2>💬 Chat with CloneAI</h2>
+                    <p class="subtitle">Natural language interface to your assistant</p>
+                </header>
+                
+                <div class="chat-container">
+                    <div class="chat-messages" id="chat-messages">
+                        <div class="message system">
+                            <div class="message-content">
+                                👋 Hello! I'm CloneAI. I can help you with emails, calendar, documents, web search, and more. What can I do for you?
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="chat-input-container">
+                        <textarea 
+                            class="chat-input" 
+                            id="chat-input" 
+                            placeholder="Ask me anything... (e.g., 'List my last 5 emails')"
+                            rows="2"
+                        ></textarea>
+                        <button class="send-button" id="send-button">
+                            <span>Send</span>
+                            <span class="shortcut">↵</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Emails View -->
+            <section class="view" id="emails-view">
+                <header class="view-header">
+                    <h2>📧 Emails</h2>
+                    <button class="refresh-button" id="refresh-emails">🔄 Refresh</button>
+                </header>
+                
+                <div class="emails-container">
+                    <div class="loading-spinner" id="emails-loading">
+                        <div class="spinner"></div>
+                        <p>Loading emails...</p>
+                    </div>
+                    <div class="email-list" id="email-list"></div>
+                </div>
+            </section>
+
+            <!-- Calendar View -->
+            <section class="view" id="calendar-view">
+                <header class="view-header">
+                    <h2>📅 Calendar</h2>
+                    <button class="refresh-button" id="refresh-calendar">🔄 Refresh</button>
+                </header>
+                
+                <div class="calendar-container">
+                    <div class="loading-spinner" id="calendar-loading">
+                        <div class="spinner"></div>
+                        <p>Loading events...</p>
+                    </div>
+                    <div class="events-list" id="events-list"></div>
+                </div>
+            </section>
+
+            <!-- Workflows View -->
+            <section class="view" id="workflows-view">
+                <header class="view-header">
+                    <h2>⚙️ Workflows</h2>
+                    <button class="refresh-button" id="refresh-workflows">🔄 Refresh</button>
+                </header>
+                
+                <div class="workflows-container">
+                    <div class="workflows-stats" id="workflows-stats"></div>
+                    
+                    <div class="workflows-section">
+                        <h3>Built-in Workflows</h3>
+                        <div class="workflow-list" id="builtin-workflows"></div>
+                    </div>
+                    
+                    <div class="workflows-section">
+                        <h3>Custom Workflows</h3>
+                        <button class="button-secondary" id="open-workflows-folder">
+                            📂 Open Workflows Folder
+                        </button>
+                        <div class="workflow-list" id="custom-workflows"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Settings View -->
+            <section class="view" id="settings-view">
+                <header class="view-header">
+                    <h2>🔧 Settings</h2>
+                </header>
+                
+                <div class="settings-container">
+                    <div class="settings-section">
+                        <h3>System Information</h3>
+                        <div class="info-grid" id="system-info"></div>
+                    </div>
+                    
+                    <div class="settings-section">
+                        <h3>Available Features</h3>
+                        <div class="features-list" id="features-list"></div>
+                    </div>
+                    
+                    <div class="settings-section">
+                        <h3>Shortcuts</h3>
+                        <div class="shortcuts-list">
+                            <div class="shortcut-item">
+                                <span class="shortcut-key">Cmd/Ctrl + Shift + A</span>
+                                <span class="shortcut-desc">Show/Hide CloneAI</span>
+                            </div>
+                            <div class="shortcut-item">
+                                <span class="shortcut-key">Enter</span>
+                                <span class="shortcut-desc">Send message in chat</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Scripts -->
+    <script src="app.js"></script>
+</body>
+</html>
