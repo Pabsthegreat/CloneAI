@@ -12,11 +12,16 @@ from datetime import datetime
 import importlib
 import json
 import logging
+import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import uuid
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 # CloneAI imports
@@ -43,6 +48,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ============================================================================
+# Startup: Load API Keys from Config
+# ============================================================================
+
+@app.on_event("startup")
+async def load_api_keys_on_startup():
+    """
+    Load API keys from config file and set as environment variables.
+    This ensures that the API keys stored in the UI are actually used by the code.
+    """
+    try:
+        config_path = get_config_path()
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            
+            # Set each key as an environment variable
+            for key, value in config.items():
+                os.environ[key] = value
+                logger.info(f"Loaded API key: {key}")
+            
+            logger.info(f"Loaded {len(config)} API keys from {config_path}")
+        else:
+            logger.info(f"No config file found at {config_path}, using existing environment variables")
+    except Exception as e:
+        logger.error(f"Failed to load API keys on startup: {e}", exc_info=True)
 
 
 # ============================================================================
@@ -84,6 +117,29 @@ class WorkflowResponse(BaseModel):
     usage: Optional[str] = None
 
 
+class FileOperationRequest(BaseModel):
+    """Request for file operations (merge, convert, etc)"""
+    operation: str = Field(..., description="Operation: merge_pdf, convert_doc, etc")
+    file_ids: List[str] = Field(..., description="List of uploaded file IDs")
+    params: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Operation-specific parameters")
+
+
+class ConfigUpdateRequest(BaseModel):
+    """Update configuration/secrets"""
+    key: str = Field(..., description="Config key (e.g., OPENAI_API_KEY)")
+    value: str = Field(..., description="Config value")
+    category: Optional[str] = Field(default="api", description="Config category: api, credentials, settings")
+
+
+class ChatSession(BaseModel):
+    """Chat session model"""
+    session_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    messages: List[Dict[str, Any]]
+
+
 # ============================================================================
 # Health & Info Endpoints
 # ============================================================================
@@ -105,7 +161,7 @@ async def get_system_info():
         from agent.system_info import get_config_dir
         config_dir = get_config_dir()
         
-        workflows = workflow_registry.list()
+        workflows = list(workflow_registry.list())
         
         return {
             "success": True,
@@ -326,6 +382,19 @@ async def chat(req: ChatRequest):
                             command_to_run = execution_plan.command
                             logger.info(f"   Command: {command_to_run}")
                             
+                            # Validate command format before executing
+                            if not command_to_run or ':' not in command_to_run:
+                                error_msg = f"Invalid command format: '{command_to_run}'. Expected 'namespace:action param:value'"
+                                logger.error(f"   ✗ {error_msg}")
+                                response["steps_executed"].append({
+                                    "step": step_index,
+                                    "description": step_instruction,
+                                    "command": command_to_run,
+                                    "status": "failed",
+                                    "error": error_msg
+                                })
+                                continue
+                            
                             # Execute the CLI command
                             step_output = execute_single_command(command_to_run)
                             
@@ -349,12 +418,16 @@ async def chat(req: ChatRequest):
                             })
                         
                         except Exception as step_error:
-                            logger.error(f"   ✗ Step {step_index} failed: {step_error}", exc_info=True)
+                            error_msg = str(step_error)
+                            if "Commands must include a namespace" in error_msg:
+                                error_msg = f"{error_msg} Command attempted: '{command_to_run if 'command_to_run' in locals() else 'unknown'}'"
+                            logger.error(f"   ✗ Step {step_index} failed: {error_msg}", exc_info=True)
                             response["steps_executed"].append({
                                 "step": step_index,
                                 "description": step_instruction,
+                                "command": command_to_run if 'command_to_run' in locals() else 'N/A',
                                 "status": "failed",
-                                "error": str(step_error)
+                                "error": error_msg
                             })
                             # Continue to next step instead of breaking (resilient execution)
                     
@@ -374,43 +447,88 @@ async def chat(req: ChatRequest):
             # Single-step workflow execution
             else:
                 try:
-                    # For mail commands, convert natural language to CLI format
-                    if "mail" in classification.categories:
-                        # Extract number from message (e.g., "last 5 emails" -> 5)
-                        import re
-                        numbers = re.findall(r'\d+', req.message)
-                        count = int(numbers[0]) if numbers else 10
-                        
-                        # Build command
-                        if "unread" in req.message.lower():
-                            command = f"mail:list last {count} unread"
-                        else:
-                            command = f"mail:list last {count}"
-                        
-                        logger.info(f"Executing mail command: {command}")
-                        result = execute_single_command(command)
-                        response["executed"] = True
-                        response["output"] = result
+                    # ALWAYS use tiered planner to convert natural language to CLI command
+                    logger.info(f"Planning single-step execution: {req.message}")
                     
-                    elif "calendar" in classification.categories:
-                        # Extract number for calendar events
-                        import re
-                        numbers = re.findall(r'\d+', req.message)
-                        count = int(numbers[0]) if numbers else 10
-                        command = f"calendar:list count:{count}"
-                        
-                        logger.info(f"Executing calendar command: {command}")
-                        result = execute_single_command(command)
-                        response["executed"] = True
-                        response["output"] = result
+                    # Use the first step from steps_plan
+                    step_instruction = classification.steps_plan[0] if classification.steps_plan else req.message
                     
+                    # Initialize memory
+                    memory = WorkflowMemory(
+                        original_request=req.message,
+                        steps_plan=classification.steps_plan,
+                        categories=classification.categories
+                    )
+                    
+                    # Plan the step execution
+                    execution_plan = plan_step_execution(
+                        current_step_instruction=step_instruction,
+                        memory=memory,
+                        categories=classification.categories
+                    )
+                    
+                    # Handle local answer
+                    if execution_plan.local_answer:
+                        response["executed"] = True
+                        response["output"] = execution_plan.local_answer
+                    # Execute the command
+                    elif execution_plan.can_execute and execution_plan.command:
+                            # Check if this is a mail:send command - if so, create draft instead
+                            if execution_plan.command.startswith("mail:send"):
+                                logger.info(f"Creating email draft for: {execution_plan.command}")
+                                
+                                # Parse the command to extract email parameters
+                                import shlex
+                                parts = shlex.split(execution_plan.command)
+                                email_params = {}
+                                for part in parts[1:]:  # Skip 'mail:send'
+                                    if ':' in part:
+                                        key, value = part.split(':', 1)
+                                        email_params[key] = value
+                                
+                                # Create draft
+                                draft_id = str(uuid.uuid4())
+                                email_drafts[draft_id] = {
+                                    "draft_id": draft_id,
+                                    "to": email_params.get("to", ""),
+                                    "subject": email_params.get("subject", ""),
+                                    "body": email_params.get("body", ""),
+                                    "cc": email_params.get("cc"),
+                                    "bcc": email_params.get("bcc"),
+                                    "attachments": email_params.get("attachments", "").split(",") if email_params.get("attachments") else [],
+                                    "created_at": datetime.now().isoformat(),
+                                    "status": "pending",
+                                    "command": execution_plan.command
+                                }
+                                
+                                response["executed"] = False
+                                response["draft_id"] = draft_id
+                                response["requires_confirmation"] = True
+                                response["draft"] = email_drafts[draft_id]
+                                response["output"] = "Email draft created. Please review and confirm."
+                            else:
+                                logger.info(f"Executing command: {execution_plan.command}")
+                                result = execute_single_command(execution_plan.command)
+                                response["executed"] = True
+                                response["output"] = result
+                                
+                                # Check if result contains an image path
+                                if isinstance(result, str) and "artifacts/" in result:
+                                    # Extract filename from path
+                                    import re
+                                    match = re.search(r'artifacts/([^\s]+\.(png|jpg|jpeg|gif))', result)
+                                    if match:
+                                        image_filename = match.group(1)
+                                        response["image_url"] = f"/api/artifacts/{image_filename}"
+                                        response["image_filename"] = image_filename
+                    # Needs new workflow
+                    elif execution_plan.needs_new_workflow:
+                        response["executed"] = False
+                        response["output"] = f"This requires a new workflow to be generated. {execution_plan.reasoning}"
                     else:
-                        # Try direct execution with natural language
-                        logger.info(f"Attempting direct execution: {req.message}")
-                        result = execute_single_command(req.message)
-                        response["executed"] = True
-                        response["output"] = result
-                        
+                        response["executed"] = False
+                        response["output"] = f"Could not execute: {execution_plan.reasoning}"
+                    
                 except Exception as exec_error:
                     logger.error(f"Execution failed: {exec_error}", exc_info=True)
                     response["executed"] = False
@@ -432,73 +550,114 @@ async def chat(req: ChatRequest):
 # ============================================================================
 # Workflow Management Endpoints
 # ============================================================================
+# (Moved to line 1557 to avoid duplication)
 
-@app.get("/api/workflows")
-async def list_workflows():
-    """List all available workflows (built-in + custom)"""
+
+# ============================================================================
+# Email Draft & Send Confirmation
+# ============================================================================
+
+# In-memory draft storage
+email_drafts: Dict[str, Dict[str, Any]] = {}
+
+
+class EmailDraftRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+    cc: Optional[str] = None
+    bcc: Optional[str] = None
+    attachments: Optional[List[str]] = None
+
+
+@app.post("/api/email/draft")
+async def create_email_draft(draft: EmailDraftRequest):
+    """Create an email draft for confirmation before sending"""
     try:
-        workflows = workflow_registry.list()
+        draft_id = str(uuid.uuid4())
+        email_drafts[draft_id] = {
+            "draft_id": draft_id,
+            "to": draft.to,
+            "subject": draft.subject,
+            "body": draft.body,
+            "cc": draft.cc,
+            "bcc": draft.bcc,
+            "attachments": draft.attachments or [],
+            "created_at": datetime.now().isoformat(),
+            "status": "pending"
+        }
         
-        workflow_list = []
-        for spec in workflows:
-            workflow_list.append({
-                "namespace": spec.namespace,
-                "name": spec.name,  # Fixed: WorkflowSpec uses 'name' not 'action'
-                "summary": spec.summary,
-                "parameters": [
-                    {
-                        "name": p.name,
-                        "type": p.type.__name__ if hasattr(p.type, '__name__') else str(p.type),
-                        "required": p.required,
-                        "description": p.description,
-                        "default": p.default
-                    }
-                    for p in spec.parameters
-                ],
-                "usage": spec.metadata.get('usage', None) if spec.metadata else None
-            })
-        
-        # Separate built-in from custom
-        custom_dir = Path.home() / ".clai" / "workflows" / "custom"
-        custom_workflows = []
-        if custom_dir.exists():
-            for py_file in custom_dir.glob("*.py"):
-                custom_workflows.append({
-                    "filename": py_file.name,
-                    "path": str(py_file),
-                    "modified": datetime.fromtimestamp(py_file.stat().st_mtime).isoformat()
-                })
+        logger.info(f"Created email draft: {draft_id}")
         
         return {
             "success": True,
-            "total": len(workflow_list),
-            "workflows": workflow_list,
-            "custom_workflows": custom_workflows,
-            "custom_count": len(custom_workflows)
+            "draft_id": draft_id,
+            "draft": email_drafts[draft_id]
         }
         
     except Exception as e:
-        logger.error(f"Failed to list workflows: {e}")
+        logger.error(f"Failed to create email draft: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/workflows/reload")
-async def reload_workflows():
-    """Reload workflow registry (picks up new custom workflows)"""
+@app.post("/api/email/send/{draft_id}")
+async def send_email_draft(draft_id: str):
+    """Send a confirmed email draft"""
     try:
-        logger.info("Reloading workflow registry...")
-        importlib.reload(workflow_registry)
+        if draft_id not in email_drafts:
+            raise HTTPException(status_code=404, detail="Draft not found")
         
-        workflows = workflow_registry.list()
+        draft = email_drafts[draft_id]
+        
+        # Build mail:send command
+        command = f'mail:send to:"{draft["to"]}" subject:"{draft["subject"]}" body:"{draft["body"]}"'
+        
+        if draft.get("cc"):
+            command += f' cc:"{draft["cc"]}"'
+        if draft.get("bcc"):
+            command += f' bcc:"{draft["bcc"]}"'
+        if draft.get("attachments"):
+            command += f' attachments:{",".join(draft["attachments"])}'
+        
+        logger.info(f"Sending email draft {draft_id}: {command}")
+        result = execute_single_command(command)
+        
+        # Update draft status
+        draft["status"] = "sent"
+        draft["sent_at"] = datetime.now().isoformat()
         
         return {
             "success": True,
-            "workflows_count": len(workflows),
-            "message": "Workflow registry reloaded successfully"
+            "draft_id": draft_id,
+            "result": result,
+            "message": "Email sent successfully"
         }
         
     except Exception as e:
-        logger.error(f"Failed to reload workflows: {e}")
+        logger.error(f"Failed to send email draft: {e}")
+        if draft_id in email_drafts:
+            email_drafts[draft_id]["status"] = "failed"
+            email_drafts[draft_id]["error"] = str(e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/email/draft/{draft_id}")
+async def cancel_email_draft(draft_id: str):
+    """Cancel/delete an email draft"""
+    try:
+        if draft_id not in email_drafts:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        
+        del email_drafts[draft_id]
+        logger.info(f"Cancelled email draft: {draft_id}")
+        
+        return {
+            "success": True,
+            "message": "Draft cancelled"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to cancel email draft: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -646,6 +805,823 @@ async def list_calendar_events(count: int = 10):
         
     except Exception as e:
         logger.error(f"Failed to fetch calendar events: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# File Upload & Operations
+# ============================================================================
+
+# In-memory storage for uploaded files (use Redis/DB in production)
+uploaded_files: Dict[str, Dict[str, Any]] = {}
+temp_dir = Path(tempfile.gettempdir()) / "cloneai_uploads"
+temp_dir.mkdir(exist_ok=True)
+
+
+@app.post("/api/files/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """
+    Upload a file for processing.
+    Returns a file_id to reference in operations.
+    """
+    try:
+        # Generate unique file ID
+        file_id = str(uuid.uuid4())
+        
+        # Save file to temp directory
+        file_path = temp_dir / f"{file_id}_{file.filename}"
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        # Store file metadata
+        uploaded_files[file_id] = {
+            "file_id": file_id,
+            "filename": file.filename,
+            "path": str(file_path),
+            "size": len(content),
+            "content_type": file.content_type,
+            "uploaded_at": datetime.now().isoformat()
+        }
+        
+        logger.info(f"File uploaded: {file.filename} -> {file_id}")
+        
+        return {
+            "success": True,
+            "file_id": file_id,
+            "filename": file.filename,
+            "size": len(content)
+        }
+        
+    except Exception as e:
+        logger.error(f"File upload failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/files/operate")
+async def perform_file_operation(req: FileOperationRequest):
+    """
+    Perform operations on uploaded files:
+    - merge_pdf: Merge multiple PDFs
+    - convert_doc: Convert document formats (doc->pdf, etc)
+    - compress: Compress images/files
+    - extract: Extract text from PDFs
+    """
+    try:
+        operation = req.operation
+        file_ids = req.file_ids
+        params = req.params
+        
+        # Validate files exist
+        for file_id in file_ids:
+            if file_id not in uploaded_files:
+                raise HTTPException(status_code=404, detail=f"File not found: {file_id}")
+        
+        result_file_id = str(uuid.uuid4())
+        result_filename = f"result_{result_file_id}"
+        
+        # Execute operation based on type
+        if operation == "merge_pdf":
+            # Use doc:merge-pdf command from CloneAI
+            file_paths = [uploaded_files[fid]["path"] for fid in file_ids]
+            result_path = temp_dir / f"{result_filename}.pdf"
+            
+            # Quote file paths to handle spaces in filenames
+            quoted_paths = ','.join([f'"{path}"' for path in file_paths])
+            
+            # Call merge workflow
+            cmd = f'doc:merge-pdf files:{quoted_paths} output:"{result_path}"'
+            logger.info(f"Executing: {cmd}")
+            result = execute_single_command(cmd)
+            logger.info(f"Merge result: {result}")
+            
+            # Verify the file was created
+            if not result_path.exists():
+                # Try artifacts folder (CloneAI default)
+                artifacts_result = Path.cwd() / "artifacts" / f"{result_filename}.pdf"
+                if artifacts_result.exists():
+                    result_path = artifacts_result
+                else:
+                    raise HTTPException(status_code=500, detail=f"Merge failed: output file not created. Result: {result}")
+            
+            uploaded_files[result_file_id] = {
+                "file_id": result_file_id,
+                "filename": f"{result_filename}.pdf",
+                "path": str(result_path),
+                "size": result_path.stat().st_size,
+                "content_type": "application/pdf",
+                "created_at": datetime.now().isoformat()
+            }
+            
+        elif operation == "convert_doc":
+            # Convert document format
+            source_file = uploaded_files[file_ids[0]]
+            target_format = params.get("format", "pdf")
+            result_path = temp_dir / f"{result_filename}.{target_format}"
+            
+            # Use appropriate conversion workflow based on format
+            source_path = source_file['path']
+            if source_path.endswith('.docx') and target_format == 'pdf':
+                cmd = f'doc:docx-to-pdf input:"{source_path}" output:"{result_path}"'
+            elif source_path.endswith('.pdf') and target_format == 'docx':
+                cmd = f'doc:pdf-to-docx input:"{source_path}" output:"{result_path}"'
+            elif source_path.endswith('.pptx') and target_format == 'pdf':
+                cmd = f'doc:ppt-to-pdf input:"{source_path}" output:"{result_path}"'
+            else:
+                raise HTTPException(status_code=400, detail=f"Conversion from {source_path.split('.')[-1]} to {target_format} not supported")
+            
+            logger.info(f"Executing: {cmd}")
+            result = execute_single_command(cmd)
+            logger.info(f"Conversion result: {result}")
+            
+            # Verify the file was created
+            if not result_path.exists():
+                artifacts_result = Path.cwd() / "artifacts" / f"{result_filename}.{target_format}"
+                if artifacts_result.exists():
+                    result_path = artifacts_result
+                else:
+                    raise HTTPException(status_code=500, detail=f"Conversion failed: output file not created. Result: {result}")
+            
+            uploaded_files[result_file_id] = {
+                "file_id": result_file_id,
+                "filename": f"{result_filename}.{target_format}",
+                "path": str(result_path),
+                "size": result_path.stat().st_size,
+                "content_type": f"application/{target_format}",
+                "created_at": datetime.now().isoformat()
+            }
+            
+        elif operation == "extract_text":
+            # Extract text from PDF/document
+            source_file = uploaded_files[file_ids[0]]
+            
+            # For now, return a placeholder since text extraction requires additional libraries
+            # TODO: Add text extraction workflow
+            return {
+                "success": False,
+                "operation": operation,
+                "error": "Text extraction not yet implemented. Please install PyPDF2 or pdfplumber."
+            }
+            
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown operation: {operation}")
+        
+        return {
+            "success": True,
+            "operation": operation,
+            "result_file_id": result_file_id,
+            "result_filename": uploaded_files[result_file_id]["filename"]
+        }
+        
+    except Exception as e:
+        logger.error(f"File operation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/files/download/{file_id}")
+async def download_file(file_id: str):
+    """Download a processed file"""
+    try:
+        if file_id not in uploaded_files:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        file_info = uploaded_files[file_id]
+        file_path = Path(file_info["path"])
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"File not found on disk: {file_path}")
+        
+        return FileResponse(
+            path=str(file_path),
+            filename=file_info["filename"],
+            media_type=file_info.get("content_type", "application/octet-stream")
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"File download failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/artifacts/{filename}")
+async def serve_artifact(filename: str):
+    """Serve files from the artifacts folder (e.g., generated images)"""
+    try:
+        artifacts_dir = Path.cwd() / "artifacts"
+        file_path = artifacts_dir / filename
+        
+        # Security: prevent path traversal
+        if not file_path.resolve().is_relative_to(artifacts_dir.resolve()):
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"Artifact not found: {filename}")
+        
+        # Determine media type
+        media_type = "application/octet-stream"
+        if filename.endswith('.png'):
+            media_type = "image/png"
+        elif filename.endswith('.jpg') or filename.endswith('.jpeg'):
+            media_type = "image/jpeg"
+        elif filename.endswith('.gif'):
+            media_type = "image/gif"
+        elif filename.endswith('.pdf'):
+            media_type = "application/pdf"
+        
+        return FileResponse(
+            path=str(file_path),
+            media_type=media_type,
+            filename=filename
+        )
+        
+    except Exception as e:
+        logger.error(f"File download failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/files/{file_id}")
+async def delete_file(file_id: str):
+    """Delete an uploaded file"""
+    try:
+        if file_id not in uploaded_files:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        file_info = uploaded_files[file_id]
+        file_path = Path(file_info["path"])
+        
+        # Delete from disk
+        if file_path.exists():
+            file_path.unlink()
+        
+        # Remove from memory
+        del uploaded_files[file_id]
+        
+        logger.info(f"Deleted file: {file_id}")
+        
+        return {"success": True, "message": "File deleted"}
+        
+    except Exception as e:
+        logger.error(f"File deletion failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Configuration & Secrets Management
+# ============================================================================
+
+def get_config_path() -> Path:
+    """
+    Get path to API keys config file (separate from OAuth credentials).
+    
+    Returns path to api_keys.json which stores OPENAI_API_KEY, SERPER_API_KEY, etc.
+    This is separate from credentials.json which stores Google OAuth client secrets.
+    """
+    # Priority order for API keys config:
+    # 1. Environment variable CLONEAI_API_KEYS_PATH
+    # 2. User home directory ~/.clai/api_keys.json
+    # 3. Project root api_keys.json
+    
+    env_path = os.environ.get('CLONEAI_API_KEYS_PATH')
+    if env_path and Path(env_path).exists():
+        return Path(env_path)
+    
+    possible_paths = [
+        Path.home() / ".clai" / "api_keys.json",  # Separate file for API keys
+        Path.cwd() / "api_keys.json",
+        Path(__file__).parent.parent.parent / "api_keys.json"
+    ]
+    
+    for path in possible_paths:
+        if path.exists():
+            return path
+    
+    # Create default if none exist
+    default_path = Path.home() / ".clai" / "api_keys.json"
+    default_path.parent.mkdir(exist_ok=True, mode=0o700)  # Secure permissions
+    return default_path
+
+
+@app.get("/api/config")
+async def get_config():
+    """
+    Get current configuration (secrets masked).
+    Returns available keys with masked values.
+    """
+    try:
+        config_path = get_config_path()
+        
+        if not config_path.exists():
+            return {
+                "success": True,
+                "config": {},
+                "config_path": str(config_path),
+                "keys": [],  # FIXED: Always include keys array
+                "message": "No config file found"
+            }
+        
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        
+        # Mask sensitive values
+        masked_config = {}
+        for key, value in config.items():
+            if isinstance(value, str) and len(value) > 8:
+                masked_config[key] = value[:4] + "*" * (len(value) - 8) + value[-4:]
+            else:
+                masked_config[key] = "*" * 8
+        
+        return {
+            "success": True,
+            "config": masked_config,
+            "config_path": str(config_path),
+            "keys": list(config.keys())
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get config: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/config")
+async def update_config(req: ConfigUpdateRequest):
+    """
+    Update a configuration value.
+    Creates config file if it doesn't exist and sets it as environment variable.
+    """
+    try:
+        config_path = get_config_path()
+        
+        # Load existing config
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+        else:
+            config = {}
+        
+        # Update value
+        config[req.key] = req.value
+        
+        # Save config
+        config_path.parent.mkdir(exist_ok=True)
+        with open(config_path, 'w') as f:
+            json.dump(config, f, indent=2)
+        
+        # IMPORTANT: Set as environment variable so it's immediately available
+        os.environ[req.key] = req.value
+        
+        logger.info(f"Updated config key: {req.key} and set as environment variable")
+        
+        return {
+            "success": True,
+            "message": f"Updated {req.key}",
+            "config_path": str(config_path)
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to update config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/config/download")
+async def download_config():
+    """Download current config file (creates empty one if doesn't exist)"""
+    try:
+        config_path = get_config_path()
+        
+        # If file doesn't exist, create an empty one
+        if not config_path.exists():
+            config_path.parent.mkdir(exist_ok=True, mode=0o700)
+            with open(config_path, 'w') as f:
+                json.dump({}, f, indent=2)
+            logger.info(f"Created empty config file at {config_path}")
+        
+        return FileResponse(
+            path=str(config_path),
+            filename="cloneai_api_keys.json",
+            media_type="application/json"
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to download config: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/config/{key}")
+async def delete_config_key(key: str):
+    """Delete a configuration key and remove from environment variables"""
+    try:
+        config_path = get_config_path()
+        
+        if not config_path.exists():
+            raise HTTPException(status_code=404, detail="Config file not found")
+        
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        
+        if key not in config:
+            raise HTTPException(status_code=404, detail=f"Key not found: {key}")
+        
+        del config[key]
+        
+        with open(config_path, 'w') as f:
+            json.dump(config, f, indent=2)
+        
+        # IMPORTANT: Remove from environment variables too
+        if key in os.environ:
+            del os.environ[key]
+        
+        logger.info(f"Deleted config key: {key} and removed from environment")
+        
+        return {
+            "success": True,
+            "message": f"Deleted {key}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to delete config key: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/config/google-oauth")
+async def save_google_oauth_credentials(request: Request):
+    """
+    Save Google OAuth credentials to ~/.clai/credentials.json
+    This is separate from the API keys file and used specifically for Gmail/Calendar OAuth.
+    """
+    try:
+        body = await request.json()
+        credentials_json = body.get('credentials')
+        
+        if not credentials_json:
+            raise HTTPException(status_code=400, detail="Missing credentials")
+        
+        # Parse the credentials JSON
+        credentials_data = json.loads(credentials_json) if isinstance(credentials_json, str) else credentials_json
+        
+        # Save to the OAuth credentials file (not api_keys.json)
+        oauth_cred_path = Path.home() / ".clai" / "credentials.json"
+        oauth_cred_path.parent.mkdir(exist_ok=True, mode=0o700)
+        
+        with open(oauth_cred_path, 'w') as f:
+            json.dump(credentials_data, f, indent=2)
+        
+        os.chmod(oauth_cred_path, 0o600)  # Secure permissions
+        
+        logger.info(f"Saved Google OAuth credentials to: {oauth_cred_path}")
+        
+        return {
+            "success": True,
+            "message": "Google OAuth credentials saved",
+            "path": str(oauth_cred_path)
+        }
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in Google credentials: {e}")
+        raise HTTPException(status_code=400, detail="Invalid JSON format")
+    except Exception as e:
+        logger.error(f"Failed to save Google OAuth credentials: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/config/upload")
+async def upload_credentials(file: UploadFile = File(...)):
+    """Upload credentials JSON file"""
+    try:
+        config_path = get_config_path()
+        
+        # Read uploaded file
+        content = await file.read()
+        config_data = json.loads(content)
+        
+        # Validate it's a dict
+        if not isinstance(config_data, dict):
+            raise HTTPException(status_code=400, detail="Invalid credentials format")
+        
+        # Save to config path
+        config_path.parent.mkdir(exist_ok=True, mode=0o700)
+        with open(config_path, 'w') as f:
+            json.dump(config_data, f, indent=2)
+        
+        os.chmod(config_path, 0o600)  # Secure permissions
+        
+        logger.info(f"Uploaded credentials to: {config_path}")
+        
+        return {
+            "success": True,
+            "message": f"Credentials uploaded successfully",
+            "config_path": str(config_path),
+            "keys_count": len(config_data)
+        }
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON format")
+    except Exception as e:
+        logger.error(f"Failed to upload credentials: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/config/keys/{key_name}")
+async def get_api_key(key_name: str):
+    """Get specific API key (for frontend display)"""
+    try:
+        config_path = get_config_path()
+        
+        if not config_path.exists():
+            return {
+                "success": False,
+                "message": f"{key_name} not configured"
+            }
+        
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        
+        # Map common key names
+        key_mapping = {
+            "openai": "OPENAI_API_KEY",
+            "serper": "SERPER_API_KEY",
+            "google": "GOOGLE_APPLICATION_CREDENTIALS"
+        }
+        
+        actual_key = key_mapping.get(key_name.lower(), key_name)
+        
+        if actual_key in config:
+            value = config[actual_key]
+            # Mask the value
+            if isinstance(value, str) and len(value) > 8:
+                masked = value[:4] + "*" * (len(value) - 8) + value[-4:]
+            else:
+                masked = "*" * 8
+            
+            return {
+                "success": True,
+                "key": actual_key,
+                "value": masked,
+                "configured": True
+            }
+        
+        return {
+            "success": False,
+            "key": actual_key,
+            "configured": False
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get API key: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Chat Sessions Management
+# ============================================================================
+
+# In-memory chat sessions (use Redis/DB in production)
+chat_sessions: Dict[str, ChatSession] = {}
+
+
+@app.get("/api/chats")
+async def list_chat_sessions():
+    """List all chat sessions"""
+    try:
+        sessions = [
+            {
+                "session_id": s.session_id,
+                "title": s.title,
+                "created_at": s.created_at,
+                "updated_at": s.updated_at,
+                "message_count": len(s.messages)
+            }
+            for s in chat_sessions.values()
+        ]
+        
+        # Sort by updated_at descending
+        sessions.sort(key=lambda x: x["updated_at"], reverse=True)
+        
+        return {
+            "success": True,
+            "sessions": sessions,
+            "count": len(sessions)
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to list chat sessions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/chats/new")
+async def create_chat_session(title: Optional[str] = "New Chat"):
+    """Create a new chat session"""
+    try:
+        session_id = str(uuid.uuid4())
+        now = datetime.now().isoformat()
+        
+        session = ChatSession(
+            session_id=session_id,
+            title=title or "New Chat",
+            created_at=now,
+            updated_at=now,
+            messages=[]
+        )
+        
+        chat_sessions[session_id] = session
+        
+        logger.info(f"Created chat session: {session_id}")
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "title": session.title,
+            "created_at": session.created_at
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to create chat session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/chats/{session_id}")
+async def get_chat_session(session_id: str):
+    """Get a specific chat session with all messages"""
+    try:
+        if session_id not in chat_sessions:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        
+        session = chat_sessions[session_id]
+        
+        return {
+            "success": True,
+            "session": session.dict()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get chat session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/chats/{session_id}/message")
+async def add_message_to_session(session_id: str, message: Dict[str, Any]):
+    """Add a message to a chat session"""
+    try:
+        if session_id not in chat_sessions:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        
+        session = chat_sessions[session_id]
+        
+        # Add message
+        message["timestamp"] = datetime.now().isoformat()
+        session.messages.append(message)
+        session.updated_at = datetime.now().isoformat()
+        
+        # Update title if it's the first user message
+        if len(session.messages) == 1 and message.get("role") == "user":
+            # Use first few words as title
+            text = message.get("content", "New Chat")[:50]
+            session.title = text if len(text) < 50 else text + "..."
+        
+        logger.info(f"Added message to session {session_id}")
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "message_count": len(session.messages)
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to add message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/chats/{session_id}")
+async def delete_chat_session(session_id: str):
+    """Delete a chat session"""
+    try:
+        if session_id not in chat_sessions:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        
+        del chat_sessions[session_id]
+        
+        logger.info(f"Deleted chat session: {session_id}")
+        
+        return {
+            "success": True,
+            "message": "Chat session deleted"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to delete chat session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/chats/{session_id}")
+async def update_chat_session(session_id: str, title: Optional[str] = None):
+    """Update chat session metadata"""
+    try:
+        if session_id not in chat_sessions:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        
+        session = chat_sessions[session_id]
+        
+        if title:
+            session.title = title
+        
+        session.updated_at = datetime.now().isoformat()
+        
+        logger.info(f"Updated chat session: {session_id}")
+        
+        return {
+            "success": True,
+            "session": session.dict()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to update chat session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Workflows Listing
+# ============================================================================
+
+@app.get("/api/workflows")
+async def list_workflows():
+    """List all available workflows with metadata"""
+    try:
+        workflows_data = []
+        
+        # workflow_registry is the WorkflowRegistry instance, not a module
+        for workflow_info in workflow_registry.export_command_info():
+            workflows_data.append({
+                "command": f"{workflow_info['namespace']}:{workflow_info['name']}",
+                "namespace": workflow_info['namespace'],
+                "name": workflow_info['name'],
+                "summary": workflow_info['summary'],
+                "description": workflow_info['description'],
+                "usage": workflow_info['usage'],
+                "category": workflow_info['category'],
+                "examples": workflow_info.get('examples', []),
+                "preferred_llm": workflow_info.get('preferred_llm', 'local')
+            })
+        
+        # Group by namespace
+        by_namespace = {}
+        for wf in workflows_data:
+            ns = wf['namespace']
+            if ns not in by_namespace:
+                by_namespace[ns] = []
+            by_namespace[ns].append(wf)
+        
+        return {
+            "success": True,
+            "workflows": workflows_data,
+            "by_namespace": by_namespace,
+            "total": len(workflows_data)
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to list workflows: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Settings Management
+# ============================================================================
+
+# In-memory settings (use Redis/DB in production)
+app_settings: Dict[str, Any] = {
+    "keyboard_shortcut": "CommandOrControl+Shift+A",
+    "theme": "system",
+    "auto_start": False,
+    "notifications": True
+}
+
+
+@app.get("/api/settings")
+async def get_settings():
+    """Get application settings"""
+    try:
+        return {
+            "success": True,
+            "settings": app_settings
+        }
+    except Exception as e:
+        logger.error(f"Failed to get settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/settings")
+async def update_settings(settings: Dict[str, Any]):
+    """Update application settings"""
+    try:
+        app_settings.update(settings)
+        
+        logger.info(f"Updated settings: {list(settings.keys())}")
+        
+        return {
+            "success": True,
+            "settings": app_settings
+        }
+    except Exception as e:
+        logger.error(f"Failed to update settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -104,25 +104,23 @@ class GPTWorkflowGenerator:
         input_text = _truncate(input_text)
 
         try:
-            resp = client.responses.create(
-                model=self.model,                     # e.g., "gpt-4.1" or "gpt-4o-mini"
-                input=input_text,                     # direct text input
+            # Use chat completions API (OpenAI 2.x)
+            resp = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a senior Python engineer generating production-ready workflow modules. Output must be valid JSON matching the required schema."},
+                    {"role": "user", "content": input_text}
+                ],
                 temperature=self.temperature,
-                max_output_tokens=self.max_output_tokens,
-                store=True,
-                metadata={
-                    "component": "workflow_generator",
-                    "command": recipe.command_key(),
-                    "namespace": recipe.namespace,
-                },
+                max_tokens=self.max_output_tokens,
+                response_format={"type": "json_object"}  # Force JSON output
             )
             
             # Extract and display token usage information
-            usage = getattr(resp, "usage", None)
-            if usage:
-                input_tokens = getattr(usage, "input_tokens", 0)
-                output_tokens = getattr(usage, "output_tokens", 0)
-                total_tokens = getattr(usage, "total_tokens", input_tokens + output_tokens)
+            if resp.usage:
+                input_tokens = resp.usage.prompt_tokens
+                output_tokens = resp.usage.completion_tokens
+                total_tokens = resp.usage.total_tokens
                 
                 print(f"\n{'='*60}")
                 print(f"🤖 GPT Workflow Generation - Token Usage")
@@ -139,19 +137,8 @@ class GPTWorkflowGenerator:
         except Exception as exc:  # pragma: no cover
             raise GPTWorkflowError(f"OpenAI API request failed: {exc}") from exc
 
-        # Prefer the convenience prop; fall back if not present
-        response_text = getattr(resp, "output_text", None)
-        if not response_text:
-            # Fallback: stitch text parts from the structured "output"
-            try:
-                parts: List[str] = []
-                for item in getattr(resp, "output", []) or []:
-                    for c in getattr(item, "content", []) or []:
-                        if getattr(c, "type", "") == "output_text":
-                            parts.append(getattr(c, "text", ""))
-                response_text = "".join(parts).strip()
-            except Exception:
-                response_text = ""
+        # Extract response text from chat completion
+        response_text = resp.choices[0].message.content if resp.choices else None
 
         if not response_text:
             raise GPTWorkflowError("OpenAI API returned an empty response.")

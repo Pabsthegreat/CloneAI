@@ -53,7 +53,24 @@ def doc_merge_pdf_handler(ctx: WorkflowContext, params: Dict[str, Any]) -> str:
     # Parse comma-separated files
     files = [f.strip() for f in files_str.split(',')]
     
-    return merge_pdf_files(files, output)
+    # Get parent directory from first file
+    import os
+    if not files:
+        raise WorkflowValidationError("No files provided")
+    
+    # Extract directory from files - use temp directory if files are absolute paths
+    first_file = files[0]
+    directory = os.path.dirname(first_file) if os.path.isabs(first_file) else os.getcwd()
+    
+    # Convert to basenames if they're in the same directory
+    file_list = []
+    for f in files:
+        if os.path.isabs(f):
+            file_list.append(f)
+        else:
+            file_list.append(os.path.join(directory, f))
+    
+    return merge_pdf_files(directory, output, file_list=file_list)
 
 
 @register_workflow(

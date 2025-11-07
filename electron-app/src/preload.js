@@ -36,6 +36,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSystemInfo: () => ipcRenderer.invoke('get-system-info'),
     
     /**
+     * Update keyboard shortcut
+     */
+    updateKeyboardShortcut: (shortcut) => ipcRenderer.invoke('update-keyboard-shortcut', shortcut),
+    
+    /**
+     * Get current keyboard shortcut
+     */
+    getKeyboardShortcut: () => ipcRenderer.invoke('get-keyboard-shortcut'),
+    
+    /**
      * Event listeners
      */
     onPythonReady: (callback) => {

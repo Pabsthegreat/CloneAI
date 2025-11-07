@@ -19,23 +19,28 @@
             
             <nav class="nav-menu">
                 <button class="nav-item active" data-view="chat">
-                    <span class="icon">💬</span>
                     <span class="label">Chat</span>
                 </button>
+                <button class="nav-item" data-view="chats-history">
+                    <span class="label">Chat History</span>
+                </button>
+                <button class="nav-item" data-view="files">
+                    <span class="icon">📎</span>
+                    <span class="label">Files</span>
+                </button>
                 <button class="nav-item" data-view="emails">
-                    <span class="icon">📧</span>
                     <span class="label">Emails</span>
                 </button>
                 <button class="nav-item" data-view="calendar">
-                    <span class="icon">📅</span>
                     <span class="label">Calendar</span>
                 </button>
                 <button class="nav-item" data-view="workflows">
-                    <span class="icon">⚙️</span>
                     <span class="label">Workflows</span>
                 </button>
+                <button class="nav-item" data-view="config">
+                    <span class="label">Configuration</span>
+                </button>
                 <button class="nav-item" data-view="settings">
-                    <span class="icon">🔧</span>
                     <span class="label">Settings</span>
                 </button>
             </nav>
@@ -53,8 +58,14 @@
             <!-- Chat View -->
             <section class="view active" id="chat-view">
                 <header class="view-header">
-                    <h2>💬 Chat with CloneAI</h2>
-                    <p class="subtitle">Natural language interface to your assistant</p>
+                    <div>
+                        <h2> Chat with CloneAI</h2>
+                        <p class="subtitle">Natural language interface to your assistant</p>
+                    </div>
+                    <div class="header-actions">
+                        <button class="button-secondary" id="new-chat-button">➕ New Chat</button>
+                        <button class="button-secondary" id="attach-file-button">📎 Attach File</button>
+                    </div>
                 </header>
                 
                 <div class="chat-container">
@@ -66,11 +77,13 @@
                         </div>
                     </div>
                     
+                    <div class="attached-files" id="attached-files"></div>
+                    
                     <div class="chat-input-container">
                         <textarea 
                             class="chat-input" 
                             id="chat-input" 
-                            placeholder="Ask me anything... (e.g., 'List my last 5 emails')"
+                            placeholder="Ask me anything... (e.g., 'List my last 5 emails' or 'merge these PDFs')"
                             rows="2"
                         ></textarea>
                         <button class="send-button" id="send-button">
@@ -79,12 +92,73 @@
                         </button>
                     </div>
                 </div>
+                
+                <input type="file" id="file-input" style="display: none;" multiple />
+            </section>
+
+            <!-- Chat History View -->
+            <section class="view" id="chats-history-view">
+                <header class="view-header">
+                    <h2> Chat History</h2>
+                    <button class="refresh-button" id="refresh-chats"> Refresh</button>
+                </header>
+                
+                <div class="chats-container">
+                    <div class="loading-spinner" id="chats-loading">
+                        <div class="spinner"></div>
+                        <p>Loading chat history...</p>
+                    </div>
+                    <div class="chats-list" id="chats-list"></div>
+                </div>
+            </section>
+
+            <!-- Files View -->
+            <section class="view" id="files-view">
+                <header class="view-header">
+                    <h2>📎 File Operations</h2>
+                    <p class="subtitle">Upload and process files (merge PDFs, convert formats, extract text)</p>
+                </header>
+                
+                <div class="files-container">
+                    <div class="file-upload-area" id="file-upload-area">
+                        <div class="upload-prompt">
+                            <span class="upload-icon">📁</span>
+                            <h3>Drop files here or click to upload</h3>
+                            <p>Support for PDF, DOC, DOCX, images, and more</p>
+                            <button class="button-primary" id="select-files-button">Select Files</button>
+                        </div>
+                        <input type="file" id="files-input" style="display: none;" multiple />
+                    </div>
+                    
+                    <div class="uploaded-files-section">
+                        <h3>Uploaded Files</h3>
+                        <div class="uploaded-files-list" id="uploaded-files-list"></div>
+                    </div>
+                    
+                    <div class="file-operations-section">
+                        <h3>Operations</h3>
+                        <div class="operations-grid">
+                            <button class="operation-button" data-operation="merge_pdf">
+                                Merge PDFs
+                            </button>
+                            <button class="operation-button" data-operation="convert_doc">
+                                Convert Document
+                            </button>
+                            <button class="operation-button" data-operation="extract_text">
+                                Extract Text
+                            </button>
+                            <button class="operation-button" data-operation="compress">
+                                Compress
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <!-- Emails View -->
             <section class="view" id="emails-view">
                 <header class="view-header">
-                    <h2>📧 Emails</h2>
+                    <h2> Emails</h2>
                     <button class="refresh-button" id="refresh-emails">🔄 Refresh</button>
                 </header>
                 
@@ -100,7 +174,7 @@
             <!-- Calendar View -->
             <section class="view" id="calendar-view">
                 <header class="view-header">
-                    <h2>📅 Calendar</h2>
+                    <h2>Calendar</h2>
                     <button class="refresh-button" id="refresh-calendar">🔄 Refresh</button>
                 </header>
                 
@@ -116,7 +190,7 @@
             <!-- Workflows View -->
             <section class="view" id="workflows-view">
                 <header class="view-header">
-                    <h2>⚙️ Workflows</h2>
+                    <h2>Workflows</h2>
                     <button class="refresh-button" id="refresh-workflows">🔄 Refresh</button>
                 </header>
                 
@@ -138,13 +212,48 @@
                 </div>
             </section>
 
+            <!-- Configuration View -->
+            <section class="view" id="config-view">
+                <header class="view-header">
+                    <h2> Configuration & Secrets</h2>
+                    <div class="header-actions">
+                        <button class="button-secondary" id="download-config"> Download Config</button>
+                        <button class="button-primary" id="add-config-key"> Add Key</button>
+                    </div>
+                </header>
+                
+                <div class="config-container">
+                    <div class="config-info">
+                        <p>Manage your API keys and credentials. Values are stored securely and masked in the UI.</p>
+                        <p><strong>Config file:</strong> <span id="config-path">Loading...</span></p>
+                    </div>
+                    
+                    <div class="config-list" id="config-list">
+                        <div class="loading-spinner">
+                            <div class="spinner"></div>
+                            <p>Loading configuration...</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Settings View -->
             <section class="view" id="settings-view">
                 <header class="view-header">
-                    <h2>🔧 Settings</h2>
+                    <h2> Settings</h2>
                 </header>
                 
                 <div class="settings-container">
+                    <div class="settings-section">
+                        <h3>Keyboard Shortcut</h3>
+                        <div class="setting-item">
+                            <label for="shortcut-input">Global Shortcut to Show/Hide CloneAI:</label>
+                            <input type="text" id="shortcut-input" class="setting-input" readonly />
+                            <button class="button-secondary" id="edit-shortcut"> Edit</button>
+                        </div>
+                        <p class="setting-help">Press the keys you want to use as the shortcut</p>
+                    </div>
+                    
                     <div class="settings-section">
                         <h3>System Information</h3>
                         <div class="info-grid" id="system-info"></div>
@@ -156,21 +265,59 @@
                     </div>
                     
                     <div class="settings-section">
-                        <h3>Shortcuts</h3>
-                        <div class="shortcuts-list">
-                            <div class="shortcut-item">
-                                <span class="shortcut-key">Cmd/Ctrl + Shift + A</span>
-                                <span class="shortcut-desc">Show/Hide CloneAI</span>
-                            </div>
-                            <div class="shortcut-item">
-                                <span class="shortcut-key">Enter</span>
-                                <span class="shortcut-desc">Send message in chat</span>
-                            </div>
+                        <h3>Auto-Start</h3>
+                        <div class="setting-item">
+                            <label>
+                                <input type="checkbox" id="auto-start-checkbox" />
+                                Launch CloneAI on system startup
+                            </label>
                         </div>
                     </div>
                 </div>
             </section>
         </main>
+    </div>
+
+    <!-- Config Key Modal -->
+    <div id="config-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="config-modal-title">Add API Key</h3>
+                <button class="modal-close" id="config-modal-close">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="config-key-select">API Key Type:</label>
+                    <select id="config-key-select" class="form-control">
+                        <option value="">-- Select Key Type --</option>
+                        <option value="OPENAI_API_KEY">OpenAI API Key</option>
+                        <option value="SERPER_API_KEY">Serper API Key (Web Search)</option>
+                        <option value="ANTHROPIC_API_KEY">Anthropic API Key (Claude)</option>
+                        <option value="GOOGLE_API_KEY">Google API Key</option>
+                        <option value="GOOGLE_CREDENTIALS">Google Cloud Credentials (JSON File)</option>
+                        <option value="CUSTOM">Custom Key</option>
+                    </select>
+                </div>
+                <div class="form-group" id="custom-key-group">
+                    <label for="config-key-input">Custom Key Name:</label>
+                    <input type="text" id="config-key-input" class="form-control" placeholder="e.g., MY_API_KEY" />
+                </div>
+                <div class="form-group" id="file-upload-group">
+                    <label for="config-file-input">Upload Credentials File:</label>
+                    <input type="file" id="config-file-input" class="form-control" accept=".json" />
+                    <small class="form-hint">Upload your Google Cloud credentials JSON file</small>
+                </div>
+                <div class="form-group" id="text-value-group">
+                    <label for="config-value-input">API Key Value:</label>
+                    <input type="password" id="config-value-input" class="form-control" placeholder="Enter your API key" />
+                    <small class="form-hint">Your key will be stored securely and masked in the UI</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="button-secondary" id="config-modal-cancel">Cancel</button>
+                <button class="button-primary" id="config-modal-save">Save</button>
+            </div>
+        </div>
     </div>
 
     <!-- Scripts -->

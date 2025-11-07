@@ -73,34 +73,40 @@ def generate_image(
     try:
         client = OpenAI(api_key=api_key)
         
-        # Generate image using GPT-5 with image_generation tool
-        response = client.responses.create(
-            model="gpt-5",
-            input=f"Generate an image: {prompt}",
-            tools=[{"type": "image_generation"}]
+        # Generate image using DALL-E 3
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1024x1024",
+            quality="standard",
+            n=1
         )
         
-        # Extract base64 image data from response
-        image_data = [
-            output.result 
-            for output in response.output 
-            if output.type == "image_generation_call"
-        ]
+        # Get the image URL
+        image_url = response.data[0].url
         
-        if not image_data:
+        if not image_url:
             return {
                 "success": False,
-                "error": "No image data returned from API"
+                "error": "No image URL returned from API"
             }
         
-        # Decode and save image
-        with open(filepath, "wb") as f:
-            f.write(base64.b64decode(image_data[0]))
-        
-        return {
-            "success": True,
-            "image_path": str(filepath),
-        }
+        # Download and save the image
+        import requests
+        img_response = requests.get(image_url)
+        if img_response.status_code == 200:
+            with open(filepath, "wb") as f:
+                f.write(img_response.content)
+            
+            return {
+                "success": True,
+                "image_path": str(filepath),
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"Failed to download image: HTTP {img_response.status_code}"
+            }
         
     except Exception as e:
         return {

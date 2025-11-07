@@ -82,14 +82,14 @@ def _parse_mail_list(raw_args: str, _spec: Any) -> Dict[str, Any]:
 @register_workflow(
     namespace="mail",
     name="list",
-    summary="List recent emails.",
-    description="Fetches recent emails from Gmail, optionally filtered by sender.",
+    summary="List recent emails from primary inbox.",
+    description="Fetches recent emails from Gmail primary inbox, optionally filtered by sender.",
     parameters=(
         ParameterSpec(
             name="count",
             description="Number of emails to retrieve.",
             type=int,
-            default=5,
+            default=10,
         ),
         ParameterSpec(
             name="sender",
@@ -103,25 +103,33 @@ def _parse_mail_list(raw_args: str, _spec: Any) -> Dict[str, Any]:
             type=str,
             default=None,
         ),
+        ParameterSpec(
+            name="category",
+            description="Gmail category (primary, social, promotions, updates, forums). Defaults to primary.",
+            type=str,
+            default="primary",
+        ),
     ),
     parameter_parser=_parse_mail_list,
     metadata={
         "category": "MAIL COMMANDS",
-        "usage": "mail:list [last N] [sender:EMAIL] [query:QUERY]",
+        "usage": "mail:list [last N] [sender:EMAIL] [query:QUERY] [category:CATEGORY]",
         "returns": "str",
         "examples": [
-            'mail:list last 5',
+            'mail:list last 10',
             'mail:list sender:boss@example.com',
+            'mail:list category:primary',
         ],
     },
 )
 def run_mail_list_workflow(ctx: WorkflowContext, params: Dict[str, Any]) -> str:
-    """Workflow handler for listing emails."""
-    count = params.get("count", 5)
+    """Workflow handler for listing emails from primary inbox."""
+    count = params.get("count", 10)
     sender = params.get("sender")
     query = params.get("query")
+    category = params.get("category", "primary")  # Default to primary inbox
 
-    messages = get_email_messages(count=count, sender=sender, query=query)
+    messages = get_email_messages(count=count, sender=sender, query=query, category=category)
     formatted = format_email_list(messages)
 
     extras = ctx.extras

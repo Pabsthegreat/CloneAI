@@ -287,9 +287,14 @@ function createTray() {
 /**
  * Register global shortcuts
  */
-function registerShortcuts() {
-    // Cmd/Ctrl + Shift + A to show/hide window
-    const ret = globalShortcut.register('CommandOrControl+Shift+A', () => {
+let currentShortcut = 'CommandOrControl+Shift+A';
+
+function registerShortcuts(shortcut = currentShortcut) {
+    // Unregister previous shortcut
+    globalShortcut.unregisterAll();
+    
+    // Register new shortcut
+    const ret = globalShortcut.register(shortcut, () => {
         if (mainWindow) {
             if (mainWindow.isVisible()) {
                 mainWindow.hide();
@@ -303,9 +308,12 @@ function registerShortcuts() {
     });
     
     if (ret) {
-        console.log('[Shortcuts] Registered: Cmd/Ctrl+Shift+A');
+        currentShortcut = shortcut;
+        console.log(`[Shortcuts] Registered: ${shortcut}`);
+        return true;
     } else {
-        console.log('[Shortcuts] Failed to register shortcut');
+        console.log(`[Shortcuts] Failed to register: ${shortcut}`);
+        return false;
     }
 }
 
@@ -313,32 +321,22 @@ function registerShortcuts() {
  * Application lifecycle events
  */
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     console.log('[Electron] App ready');
     console.log(`[Electron] Mode: ${isDev ? 'Development' : 'Production'}`);
     console.log(`[Electron] Platform: ${process.platform}`);
     
-    // Check if we should start Python backend
-    // In dev mode, assume it's already running externally
-    const shouldStartPython = !isDev;
+    // Always try to start Python backend (checks if already running first)
+    console.log('[Electron] Checking/starting Python backend...');
+    await startPythonBackend();
     
-    if (shouldStartPython) {
-        console.log('[Electron] Starting Python backend...');
-        startPythonBackend();
-        
-        // Create window after a delay (let Python start)
-        setTimeout(() => {
-            createWindow();
-            createTray();
-            registerShortcuts();
-        }, 3000);
-    } else {
-        console.log('[Electron] Dev mode - expecting external Python backend on port 8765');
-        // Create window immediately
-        createWindow();
-        createTray();
-        registerShortcuts();
-    }
+    // Small delay to let backend initialize
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Create window and UI
+    createWindow();
+    createTray();
+    registerShortcuts();
     
     // macOS: Re-create window when dock icon is clicked
     app.on('activate', () => {
@@ -408,6 +406,22 @@ ipcMain.handle('get-system-info', async () => {
         nodeVersion: process.versions.node,
         isDev: isDev
     };
+});
+
+// Update keyboard shortcut
+ipcMain.handle('update-keyboard-shortcut', async (event, shortcut) => {
+    try {
+        const success = registerShortcuts(shortcut);
+        return { success, shortcut: currentShortcut };
+    } catch (error) {
+        console.error('[IPC] Failed to update shortcut:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Get current keyboard shortcut
+ipcMain.handle('get-keyboard-shortcut', async () => {
+    return { shortcut: currentShortcut };
 });
 
 console.log('[Electron] Main process loaded');
