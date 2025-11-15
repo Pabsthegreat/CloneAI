@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from agent.cli import execute_single_command
 from agent.tools.tiered_planner import classify_request, plan_step_execution, WorkflowMemory
 from agent.workflows import registry as workflow_registry
+from agent.system_artifacts import ArtifactsManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -61,6 +62,11 @@ async def load_api_keys_on_startup():
     This ensures that the API keys stored in the UI are actually used by the code.
     """
     try:
+        # Initialize artifacts directories
+        ArtifactsManager.initialize()
+        logger.info(f"Initialized artifacts directory at: {ArtifactsManager.get_artifacts_dir()}")
+        
+        # Load API keys
         config_path = get_config_path()
         if config_path.exists():
             with open(config_path, 'r') as f:
@@ -1368,6 +1374,113 @@ async def get_api_key(key_name: str):
         
     except Exception as e:
         logger.error(f"Failed to get API key: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Artifacts Management Endpoints
+# ============================================================================
+
+@app.get("/api/artifacts")
+async def get_artifacts(artifact_type: Optional[str] = None):
+    """
+    Get list of all generated artifacts.
+    
+    Query params:
+        artifact_type: Filter by type (images, documents, audio, all)
+    """
+    try:
+        if artifact_type and artifact_type != "all":
+            artifacts = ArtifactsManager.list_artifacts(artifact_type)
+        else:
+            artifacts = ArtifactsManager.list_artifacts()
+        
+        # Convert to serializable format
+        artifacts_list = []
+        for artifact_path in artifacts:
+            stat = artifact_path.stat()
+            artifacts_list.append({
+                "name": artifact_path.name,
+                "path": str(artifact_path),
+                "type": artifact_path.parent.name,  # images, documents, etc.
+                "size": stat.st_size,
+                "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "extension": artifact_path.suffix[1:] if artifact_path.suffix else "unknown"
+            })
+        
+        # Sort by modification time (newest first)
+        artifacts_list.sort(key=lambda x: x["modified"], reverse=True)
+        
+        return {
+            "success": True,
+            "artifacts": artifacts_list,
+            "count": len(artifacts_list),
+            "base_path": str(ArtifactsManager.get_artifacts_dir())
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get artifacts: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/artifacts/{artifact_type}/{filename}")
+async def download_artifact(artifact_type: str, filename: str):
+    """Download a specific artifact file."""
+    try:
+        file_path = ArtifactsManager.get_artifact_path(filename, artifact_type)
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Determine media type
+        media_type = "application/octet-stream"
+        if filename.endswith(('.png', '.jpg', '.jpeg', '.gif')):
+            media_type = f"image/{filename.split('.')[-1]}"
+        elif filename.endswith('.pdf'):
+            media_type = "application/pdf"
+        elif filename.endswith('.docx'):
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif filename.endswith('.pptx'):
+            media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        elif filename.endswith(('.mp3', '.wav')):
+            media_type = f"audio/{filename.split('.')[-1]}"
+        
+        # For images, don't force download - allow inline display
+        headers = {}
+        if not filename.endswith(('.png', '.jpg', '.jpeg', '.gif', '.pdf')):
+            headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        
+        return FileResponse(
+            path=str(file_path),
+            media_type=media_type,
+            headers=headers
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to download artifact: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/artifacts/{artifact_type}/{filename}")
+async def delete_artifact(artifact_type: str, filename: str):
+    """Delete a specific artifact file."""
+    try:
+        file_path = ArtifactsManager.get_artifact_path(filename, artifact_type)
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        file_path.unlink()
+        logger.info(f"Deleted artifact: {artifact_type}/{filename}")
+        
+        return {
+            "success": True,
+            "message": f"Deleted {filename}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to delete artifact: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

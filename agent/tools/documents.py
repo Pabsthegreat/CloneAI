@@ -25,6 +25,8 @@ from datetime import datetime
 from typing import List, Optional, Tuple
 from copy import deepcopy  # used only by python-pptx fallback
 
+from agent.system_artifacts import ArtifactsManager
+
 # Lazy/optional deps
 try:
     from PyPDF2 import PdfMerger  # type: ignore
@@ -63,14 +65,22 @@ def _resolve_output_path(input_path: str, output_path: Optional[str], new_ext: s
     """
     If output_path is a directory or None, derive filename from input_path and append new_ext.
     If output_path looks like a file (has an extension), return as-is.
+    Uses centralized artifacts/documents directory when no output specified.
     """
     in_base = os.path.splitext(os.path.basename(input_path))[0]
     if not output_path or os.path.isdir(output_path):
-        return os.path.join(output_path or os.getcwd(), in_base + new_ext)
+        # Use centralized artifacts directory instead of cwd
+        default_dir = output_path if output_path and os.path.isdir(output_path) else str(ArtifactsManager.get_documents_dir())
+        return os.path.join(default_dir, in_base + new_ext)
     # If no extension given, treat as directory
     root, ext = os.path.splitext(output_path)
     if ext == "":
         return os.path.join(output_path, in_base + new_ext)
+    
+    # If it's just a filename (no path), save to artifacts directory
+    if os.path.dirname(output_path) == "":
+        return os.path.join(str(ArtifactsManager.get_documents_dir()), output_path)
+    
     return output_path
 
 

@@ -20,6 +20,10 @@ COMMAND_REFERENCE = build_command_reference()
 def refresh_command_reference() -> str:
     """Regenerate the command reference after workflows are added."""
     global COMMAND_REFERENCE
+    try:
+        build_command_reference.cache_clear()  # type: ignore[attr-defined]
+    except AttributeError:
+        pass
     COMMAND_REFERENCE = build_command_reference()
     return COMMAND_REFERENCE
 

@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from agent.config.runtime import LLMProfile, LOCAL_PLANNER
 from agent.tools.ollama_client import run_ollama
 from agent.workflows import registry as workflow_registry
+from agent.system_artifacts import ArtifactsManager
 
 
 @dataclass
@@ -360,6 +361,16 @@ def plan_step_execution(
     if memory:
         memory_text = f"\n\nWORKFLOW MEMORY:\n{memory.get_summary()}"
     
+    # Get recent artifacts info for context
+    recent_artifacts = ArtifactsManager.get_recent_artifacts(limit=20)
+    artifacts_text = ""
+    if recent_artifacts:
+        artifacts_text = "\n\nRECENTLY CREATED ARTIFACTS (in ~/.clai/artifacts/):\n"
+        for artifact in recent_artifacts:
+            relative_type = artifact.parent.name  # images, documents, audio, etc.
+            artifacts_text += f"  • {artifact.name} (in {relative_type}/)\n"
+        artifacts_text += "\nNote: All generated files are automatically saved to ~/.clai/artifacts/ subdirectories"
+    
     current_time = datetime.datetime.now().astimezone()
     tz_name = current_time.tzname() or "Local"
     tz_offset = current_time.strftime('%z')  # e.g., +0530
@@ -369,6 +380,7 @@ def plan_step_execution(
 
 CURRENT STEP: "{current_step_instruction}"
 {memory_text}
+{artifacts_text}
 
 AVAILABLE COMMANDS (from categories: {', '.join(categories)}):
 {commands_text}
@@ -391,6 +403,28 @@ CRITICAL RULES:
 - for "in detail" or in depth queries or some explanation from the results... → USE search:deep
 - DO NOT create new search workflows - use existing ones!
 - Only request new workflow if task is truly unique and not searchable
+
+⚠️ EMAIL WORKFLOW GUIDANCE:
+- When sending emails (mail:send), ALL of to, subject, and body are REQUIRED
+- If user says "send it to email@example.com" after generating a file:
+  * Look at RECENTLY CREATED ARTIFACTS to find the latest file
+  * Create a meaningful subject based on the file/context (e.g., "Image Attachment", "Generated Document")
+  * Create a simple body message (e.g., "Please find the attached file.", "Here is the requested image.")
+  * Include attachments parameter with the filename from recent artifacts
+- Example: After generating "cookie_boy.png", command should be:
+  mail:send to:"user@example.com" subject:"Cookie Boy Image" body:"Here is the image you requested." attachments:cookie_boy.png
+- NEVER send mail:send with missing subject or body - always infer reasonable defaults!
+
+- When replying to emails (mail:reply), body is REQUIRED but can be inferred:
+  * Check WORKFLOW MEMORY for email context (sender, subject, body content)
+  * If user just says "reply to that email" without specifying body:
+    - Generate an appropriate response based on the original email's content
+    - Keep it professional and contextual (e.g., "Thank you for your email. I will look into this.", "Noted, thanks for the update.")
+    - Use the original subject and sender information from memory
+  * Example: If previous step showed email from john@example.com about "Meeting Request":
+    mail:reply id:abc123 body:"Thank you for the meeting request. I will check my calendar and get back to you soon."
+  * ALWAYS include a body parameter - never send mail:reply without it!
+  * Make the reply contextually relevant to the original email's topic
 
 IMPORTANT: Before choosing EXECUTE_COMMAND, check if the step can be done with LOCAL_ANSWER!
 Examples: Simple math, text manipulation, translations can be computed directly
@@ -440,15 +474,17 @@ For EXECUTE_COMMAND:
   * mail:draft to:"me@gmail.com" subject:"Physical Activity" body:"Exercise is important for health."
   * search:web query:"latest AI news" num_results:5
   * search:deep query:"Ayodhya temple statistics" num_results:3
-- ⚠️ FILE PATH RULES:
-  * Files created by CloneAI are saved in the 'artifacts/' folder by default
+- FILE PATH RULES:
+  * ALL generated files are automatically saved to ~/.clai/artifacts/ subdirectories
   * When referencing files created in previous steps, use JUST the filename (not full path)
+  * System automatically searches ~/.clai/artifacts/ and all subdirectories (images/, documents/, audio/, etc.)
   * Examples:
-    - If step 1 created "diwali.pptx" → later steps use: presentation:diwali.pptx (NOT artifacts/diwali.pptx)
-    - If step 1 created "report.pdf" → later steps use: file:report.pdf (NOT artifacts/report.pdf)
-  * Workflows will automatically check artifacts/ folder if file not found in current directory
-  * Only use full paths when user explicitly provides them or for system files
-- ✅ COMMAND CHAINING SUPPORTED (use && to chain multiple commands):
+    - If step 1 created "diwali.pptx" → later steps use: presentation:diwali.pptx
+    - If step 1 created "report.pdf" → later steps use: file:report.pdf
+    - If step 1 created "image.png" → later steps use: image:image.png
+  * Check "RECENTLY CREATED ARTIFACTS" section above to see available files
+  * Only use full paths when user explicitly provides them or for system files outside artifacts
+-  COMMAND CHAINING SUPPORTED (use && to chain multiple commands):
   * When step requires same action on multiple items, CHAIN THEM with &&
   * Example: mail:download id:abc123 && mail:download id:def456 && mail:download id:xyz789
   * Example: mail:summarize id:abc123 words:50 && mail:summarize id:def456 words:50

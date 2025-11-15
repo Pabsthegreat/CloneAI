@@ -13,6 +13,7 @@ dependencies = [
     "pyttsx3==2.90",
     "SpeechRecognition==3.10.4",
     "faster-whisper==1.0.3",
+    "coqui-tts>=0.0.25",
 ]
 
 [project.scripts]

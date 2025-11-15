@@ -23,6 +23,7 @@ from email import encoders
 import mimetypes
 
 from agent.system_info import get_credentials_path, get_gmail_token_path
+from agent.system_artifacts import ArtifactsManager
 
 # Gmail API scopes - includes reading, composing, and sending
 SCOPES = [
@@ -161,15 +162,15 @@ class GmailClient:
             to: Recipient email address
             subject: Email subject
             body: Email body text
-            cc: CC recipients (optional)
-            bcc: BCC recipients (optional)
-            attachments: List of file paths to attach (optional)
-            
+            cc: CC recipients (comma-separated)
+            bcc: BCC recipients (comma-separated)
+            attachments: List of file paths to attach
+        
         Returns:
-            Draft details dictionary
+            Dict with draft info
         """
         if not self.service:
-            self.authenticate()
+            self._authenticate()
         
         try:
             # Create message with or without attachments
@@ -190,25 +191,30 @@ class GmailClient:
                 message.attach(MIMEText(body, 'plain'))
                 
                 # Add attachments
-                for file_path in attachments:
-                    if not os.path.exists(file_path):
-                        raise FileNotFoundError(f"Attachment not found: {file_path}")
+                for file_ref in attachments:
+                    # Resolve file path using ArtifactsManager
+                    file_path = ArtifactsManager.resolve_file_path(file_ref)
+                    
+                    if file_path is None or not file_path.exists():
+                        raise FileNotFoundError(f"Attachment not found: {file_ref}")
+                    
+                    file_path_str = str(file_path)
                     
                     # Guess the content type
-                    content_type, _ = mimetypes.guess_type(file_path)
+                    content_type, _ = mimetypes.guess_type(file_path_str)
                     if content_type is None:
                         content_type = 'application/octet-stream'
                     
                     main_type, sub_type = content_type.split('/', 1)
                     
-                    with open(file_path, 'rb') as f:
+                    with open(file_path_str, 'rb') as f:
                         attachment = MIMEBase(main_type, sub_type)
                         attachment.set_payload(f.read())
                     
                     encoders.encode_base64(attachment)
                     attachment.add_header(
                         'Content-Disposition',
-                        f'attachment; filename={os.path.basename(file_path)}'
+                        f'attachment; filename={os.path.basename(file_path_str)}'
                     )
                     message.attach(attachment)
             
@@ -332,25 +338,30 @@ class GmailClient:
                 message.attach(MIMEText(body, 'plain'))
                 
                 # Add attachments
-                for file_path in attachments:
-                    if not os.path.exists(file_path):
-                        raise FileNotFoundError(f"Attachment not found: {file_path}")
+                for file_ref in attachments:
+                    # Resolve file path using ArtifactsManager
+                    file_path = ArtifactsManager.resolve_file_path(file_ref)
+                    
+                    if file_path is None or not file_path.exists():
+                        raise FileNotFoundError(f"Attachment not found: {file_ref}")
+                    
+                    file_path_str = str(file_path)
                     
                     # Guess the content type
-                    content_type, _ = mimetypes.guess_type(file_path)
+                    content_type, _ = mimetypes.guess_type(file_path_str)
                     if content_type is None:
                         content_type = 'application/octet-stream'
                     
                     main_type, sub_type = content_type.split('/', 1)
                     
-                    with open(file_path, 'rb') as f:
+                    with open(file_path_str, 'rb') as f:
                         attachment = MIMEBase(main_type, sub_type)
                         attachment.set_payload(f.read())
                     
                     encoders.encode_base64(attachment)
                     attachment.add_header(
                         'Content-Disposition',
-                        f'attachment; filename={os.path.basename(file_path)}'
+                        f'attachment; filename={os.path.basename(file_path_str)}'
                     )
                     message.attach(attachment)
             

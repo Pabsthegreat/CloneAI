@@ -12,6 +12,8 @@ try:
 except ImportError:
     OpenAI = None  # type: ignore
 
+from agent.system_artifacts import ArtifactsManager
+
 
 def generate_image(
     prompt: str,
@@ -25,7 +27,7 @@ def generate_image(
     Args:
         prompt: Text description of the image to generate
         filename: Optional filename for the image (defaults to auto-generated from prompt)
-        output_dir: Directory to save images (defaults to artifacts/)
+        output_dir: Directory to save images (defaults to ~/.clai/artifacts/images/)
     
     Returns:
         dict with keys:
@@ -51,9 +53,9 @@ def generate_image(
             "error": "OpenAI API key not found. Set OPENAI_API_KEY or CLAI_OPENAI_API_KEY environment variable."
         }
     
-    # Set output directory
+    # Set output directory to centralized artifacts/images
     if output_dir is None:
-        output_dir = str(Path.cwd() / "artifacts")
+        output_dir = str(ArtifactsManager.get_images_dir())
     
     # Create output directory if it doesn't exist
     Path(output_dir).mkdir(parents=True, exist_ok=True)

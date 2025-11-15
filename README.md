@@ -80,7 +80,7 @@ CloneAI will automatically detect your system and display: `System: Windows (x86
   - ✍️ **AI Email Drafting** - Generate professional emails: `clai draft-email "write to john@example.com"`
   - ⚡ **Multi-Step Workflows** - Automate email replies: `clai auto "check my last 3 emails and reply"`
   - � **Command Chaining** - Execute multiple commands efficiently with `&&` operator
-- 🎙️ **Voice Mode** - Hands-free conversation using the `NEBULA` hotword with local Whisper transcription: `clai auto "activate voice mode"`
+- 🎙️ **Voice Mode** - Hands-free conversation using the `NEBULA` hotword with local faster-whisper transcription + Coqui TTS playback: `clai auto "activate voice mode"`
 - �📧 **Email Management** - List, search, create drafts, send emails with attachments
   - 🎯 **Priority Email Buckets** - Filter emails from important senders/domains
   - 👁️ **View Full Emails** - See complete email body and content
@@ -123,7 +123,8 @@ clai chat "help me organize tasks"   # Direct chat
 # Voice mode
 clai auto "activate voice mode"      # Start hands-free conversation
 clai auto "shutdown voice mode"      # Stop listening mode
-# Requires local Whisper weights (`pip install faster-whisper`) for speech recognition accuracy
+# Uses local faster-whisper (`pip install faster-whisper`) for transcription
+# Uses cross-platform Coqui TTS (`pip install coqui-tts`) for natural speech output
 # Optional: set `CLAI_VOICE_HOTWORD=assistant` to change the trigger phrase
 # Optional: set `CLAI_VOICE_HOTWORD_ALIASES=assistant,assist` or `CLAI_WHISPER_LANGUAGE=auto` for advanced tuning
 

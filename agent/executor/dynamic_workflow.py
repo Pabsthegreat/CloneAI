@@ -311,6 +311,10 @@ class WorkflowGenerationManager:
     def _import_generated_modules() -> None:
         importlib.invalidate_caches()
         load_generated_workflows()
+        try:
+            build_command_reference.cache_clear()
+        except AttributeError:
+            pass
 
 
 dynamic_manager = WorkflowGenerationManager()

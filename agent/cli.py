@@ -1,9 +1,11 @@
 import os
 import re
+import time
 import typer
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from agent.state import log_command, get_history, search_history, format_history_list, get_logger
 from agent.system_info import print_system_info
+from agent.system_artifacts import ArtifactsManager, resolve_file
 from agent.workflows import (
     WorkflowExecutionError,
     WorkflowNotFoundError,
@@ -20,6 +22,9 @@ from agent.config.autotune import apply_runtime_autotune
 from agent.voice import get_voice_manager
 
 app = typer.Typer(help="Your personal CLI agent", no_args_is_help=True)
+
+# Initialize artifacts directories
+ArtifactsManager.initialize()
 
 # Apply system-based defaults for env vars, then ensure built-ins are registered.
 try:
@@ -77,6 +82,19 @@ def _detect_voice_mode_intent(instruction: str) -> Optional[str]:
             return "activate"
 
     return None
+
+
+def _print_first_token_latency(start_time: float) -> None:
+    elapsed = time.perf_counter() - start_time
+    typer.secho(f"⏱️ First token latency: {elapsed:.2f}s", fg=typer.colors.MAGENTA, dim=True)
+
+
+def _print_latency_breakdown(metrics: List[Tuple[str, float]]) -> None:
+    if not metrics:
+        return
+    typer.secho("⏱️ Detailed stage breakdown:", fg=typer.colors.MAGENTA, dim=True)
+    for label, elapsed in metrics:
+        typer.echo(f"   • {label}: {elapsed:.2f}s")
 
 
 @app.callback()
@@ -174,6 +192,15 @@ def do(action: str = typer.Argument(..., help="Action to perform")):
     typer.echo("")
     typer.secho(f"🤖 Executing: {action}", fg=typer.colors.YELLOW)
     typer.echo("")
+
+    start_time = time.perf_counter()
+    first_token_reported = False
+
+    def report_latency_once():
+        nonlocal first_token_reported
+        if not first_token_reported:
+            first_token_reported = True
+            _print_first_token_latency(start_time)
     
     # Handle cascading commands (&&)
     if '&&' in action:
@@ -185,6 +212,7 @@ def do(action: str = typer.Argument(..., help="Action to perform")):
         for i, cmd in enumerate(commands, 1):
             typer.secho(f"[{i}/{len(commands)}] {cmd}", fg=typer.colors.BLUE)
             result = execute_single_command(cmd)
+            report_latency_once()
             results.append(result)
             typer.echo(result)
             typer.echo("")
@@ -200,6 +228,7 @@ def do(action: str = typer.Argument(..., help="Action to perform")):
     
     # Execute single command
     result = execute_single_command(action)
+    report_latency_once()
     typer.echo(result)
     
 
@@ -408,6 +437,24 @@ def auto(
         clai auto "schedule a meeting tomorrow at 2pm and send invites"
         clai auto --run "check calendar for today and summarize"
     """
+    start_time = time.perf_counter()
+    first_token_reported = False
+
+    def report_latency_once() -> None:
+        nonlocal first_token_reported
+        if not first_token_reported:
+            first_token_reported = True
+            _print_first_token_latency(start_time)
+
+    start_time = time.perf_counter()
+    first_token_reported = False
+
+    def report_latency_once() -> None:
+        nonlocal first_token_reported
+        if not first_token_reported:
+            first_token_reported = True
+            _print_first_token_latency(start_time)
+
     voice_intent = _detect_voice_mode_intent(instruction)
     if voice_intent == "activate":
         typer.secho("\n🎙️  Activating conversational voice mode...", fg=typer.colors.CYAN, bold=True)
@@ -422,6 +469,11 @@ def auto(
         else:
             typer.secho("\nℹ️  Voice mode is not currently active.", fg=typer.colors.BLUE)
         return
+
+    latency_metrics: List[Tuple[str, float]] = []
+
+    def record_latency(label: str, start_marker: float) -> None:
+        latency_metrics.append((label, time.perf_counter() - start_marker))
 
     try:
         from agent.tools.tiered_planner import (
@@ -438,28 +490,31 @@ def auto(
         # ============================================================
         # GUARDRAIL: Safety Check (Optional - only if model available)
         # ============================================================
-        if is_model_available("qwen3:4b-instruct"):
-            typer.secho("🛡️  Running safety check...", fg=typer.colors.YELLOW, dim=True)
-            safety_result = check_query_safety(instruction)
+        # if is_model_available("qwen3:4b-instruct"):
+        #     typer.secho("🛡️  Running safety check...", fg=typer.colors.YELLOW, dim=True)
+        #     safety_result = check_query_safety(instruction)
             
-            if not safety_result.is_allowed:
-                typer.echo("")
-                typer.secho("❌ Query blocked by safety guardrails", fg=typer.colors.RED, bold=True)
-                typer.echo(f"   Category: {safety_result.category}")
-                typer.echo(f"   Reason: {safety_result.reason}")
-                typer.echo("")
-                typer.secho("ℹ️  This system is designed for legitimate productivity and development tasks.", 
-                           fg=typer.colors.BLUE)
-                return
-            typer.secho("   ✓ Safety check passed", fg=typer.colors.GREEN, dim=True)
+        #     if not safety_result.is_allowed:
+        #         typer.echo("")
+        #         typer.secho("❌ Query blocked by safety guardrails", fg=typer.colors.RED, bold=True)
+        #         typer.echo(f"   Category: {safety_result.category}")
+        #         typer.echo(f"   Reason: {safety_result.reason}")
+        #         typer.echo("")
+        #         typer.secho("ℹ️  This system is designed for legitimate productivity and development tasks.", 
+        #                    fg=typer.colors.BLUE)
+        #         return
+        #     typer.secho("   ✓ Safety check passed", fg=typer.colors.GREEN, dim=True)
         
-        typer.echo("")
+        # typer.echo("")
         
         # ============================================================
         # PROMPT 1: High-Level Classification
         # ============================================================
         typer.secho("📊 Step 1: Classifying request type...", fg=typer.colors.BLUE, dim=True)
+        classification_start = time.perf_counter()
         classification = classify_request(instruction)
+        record_latency("Classification", classification_start)
+        report_latency_once()
         
         # Handle local answers (no workflows needed)
         if classification.can_handle_locally and classification.local_answer:
@@ -477,6 +532,7 @@ def auto(
         
         # Workflow execution required
         if not classification.steps_plan:
+            report_latency_once()
             typer.secho("❌ Could not create execution plan", fg=typer.colors.RED)
             return
         
@@ -537,11 +593,13 @@ def auto(
             typer.secho(f"   Planning execution...", fg=typer.colors.BLUE, dim=True)
             
             # PROMPT 2+: Ask LLM how to execute this step
+            plan_start = time.perf_counter()
             execution_plan = plan_step_execution(
                 current_step_instruction=step_instruction,
                 memory=memory,
                 categories=classification.categories
             )
+            record_latency(f"Step {step_index}: plan", plan_start)
             
             typer.echo(f"   Strategy: {execution_plan.reasoning}")
             
@@ -619,11 +677,13 @@ def auto(
                 typer.echo(f"   🔄 Reloading workflows...")
                 
                 # Re-plan this step now that we have the new workflow
+                plan_start = time.perf_counter()
                 execution_plan = plan_step_execution(
                     current_step_instruction=step_instruction,
                     memory=memory,
                     categories=classification.categories
                 )
+                record_latency(f"Step {step_index}: plan (post-generation)", plan_start)
             
             # Execute command
             if not execution_plan.can_execute or not execution_plan.command:
@@ -636,7 +696,9 @@ def auto(
             # Execute the command
             step_extras: Dict[str, Any] = {}
             try:
+                exec_start = time.perf_counter()
                 result = execute_single_command(command_to_run, extras=step_extras)
+                record_latency(f"Step {step_index}: execute", exec_start)
             except Exception as exc:
                 typer.secho(f"   ❌ Error: {exc}", fg=typer.colors.RED)
                 workflow_outputs.append(f"{step_instruction}\n{command_to_run}\nERROR: {exc}")
@@ -774,6 +836,8 @@ JSON only:"""
         typer.secho(f"❌ Unexpected error: {str(e)}", fg=typer.colors.RED)
         import traceback
         traceback.print_exc()
+    finally:
+        _print_latency_breakdown(latency_metrics)
 
 @app.command()
 def history(

@@ -1,5 +1,6 @@
 """Workflow registration and execution utilities for CloneAI."""
 
+from functools import lru_cache
 from importlib import import_module
 from pathlib import Path
 from typing import Iterable, Tuple
@@ -74,6 +75,7 @@ def load_generated_workflows() -> None:
         import_module(module_name)
 
 
+@lru_cache(maxsize=2)
 def build_command_reference(include_legacy: bool = True) -> str:
     """
     Build a textual command reference that includes registered workflows and
