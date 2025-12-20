@@ -21,7 +21,7 @@ import uuid
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
@@ -567,6 +567,136 @@ async def chat(req: ChatRequest):
 # ============================================================================
 
 # In-memory draft storage
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """
+    Streaming chat interface.
+    Returns a stream of JSON events.
+    """
+    async def event_generator():
+        try:
+            start_time = datetime.now()
+            yield json.dumps({"type": "status", "message": "Thinking..."}) + "\n"
+            
+            # Classify request
+            classification = await run_in_threadpool(classify_request, req.message)
+            
+            yield json.dumps({
+                "type": "classification",
+                "data": {
+                    "can_handle_locally": classification.can_handle_locally,
+                    "needs_sequential": classification.needs_sequential,
+                    "steps_plan": classification.steps_plan,
+                    "reasoning": classification.reasoning
+                }
+            }) + "\n"
+            
+            if not req.execute:
+                return
+
+            # Handle local answer
+            if classification.can_handle_locally and classification.local_answer:
+                yield json.dumps({
+                    "type": "result",
+                    "output": classification.local_answer,
+                    "duration": (datetime.now() - start_time).total_seconds()
+                }) + "\n"
+                return
+
+            # Multi-step execution
+            if classification.needs_sequential and classification.steps_plan:
+                memory = WorkflowMemory(
+                    original_request=req.message,
+                    steps_plan=classification.steps_plan,
+                    categories=classification.categories
+                )
+                
+                all_outputs = []
+                
+                for step_index, step_instruction in enumerate(classification.steps_plan, 1):
+                    yield json.dumps({
+                        "type": "step_start",
+                        "step": step_index,
+                        "total": len(classification.steps_plan),
+                        "description": step_instruction
+                    }) + "\n"
+                    
+                    try:
+                        execution_plan = await run_in_threadpool(
+                            plan_step_execution,
+                            current_step_instruction=step_instruction,
+                            memory=memory,
+                            categories=classification.categories
+                        )
+                        
+                        if execution_plan.local_answer:
+                            memory.add_step(step_instruction, "LOCAL_COMPUTATION", execution_plan.local_answer)
+                            all_outputs.append(execution_plan.local_answer)
+                            yield json.dumps({
+                                "type": "step_complete",
+                                "step": step_index,
+                                "status": "success",
+                                "output": execution_plan.local_answer
+                            }) + "\n"
+                            continue
+                            
+                        if not execution_plan.can_execute or not execution_plan.command:
+                            yield json.dumps({
+                                "type": "step_complete",
+                                "step": step_index,
+                                "status": "skipped",
+                                "output": "Cannot execute - no command available"
+                            }) + "\n"
+                            continue
+                            
+                        command_to_run = execution_plan.command
+                        
+                        # Execute command
+                        step_output = await run_in_threadpool(execute_single_command, command_to_run)
+                        
+                        memory.add_step(step_instruction, command_to_run, str(step_output))
+                        all_outputs.append(step_output)
+                        
+                        yield json.dumps({
+                            "type": "step_complete",
+                            "step": step_index,
+                            "status": "success",
+                            "command": command_to_run,
+                            "output": str(step_output)
+                        }) + "\n"
+                        
+                    except Exception as e:
+                        logger.error(f"Step failed: {e}")
+                        yield json.dumps({
+                            "type": "step_complete",
+                            "step": step_index,
+                            "status": "failed",
+                            "error": str(e)
+                        }) + "\n"
+                
+                final_output = "\n\n---\n\n".join(str(o) for o in all_outputs) if all_outputs else "Completed with no output"
+                yield json.dumps({
+                    "type": "result",
+                    "output": final_output,
+                    "duration": (datetime.now() - start_time).total_seconds()
+                }) + "\n"
+            
+            # Single step execution (fallback)
+            else:
+                # For now, just return the reasoning if no plan
+                yield json.dumps({
+                    "type": "result",
+                    "output": classification.reasoning,
+                    "duration": (datetime.now() - start_time).total_seconds()
+                }) + "\n"
+
+        except Exception as e:
+            logger.error(f"Stream failed: {e}")
+            yield json.dumps({"type": "error", "message": str(e)}) + "\n"
+
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
+
 email_drafts: Dict[str, Dict[str, Any]] = {}
 
 

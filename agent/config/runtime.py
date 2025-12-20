@@ -156,7 +156,6 @@ LEGACY_COMMAND_PREFIXES: Tuple[str, ...] = tuple(
                 "mail:reply",
                 "mail:send",
                 "mail:search",
-                "mail:priority",
                 "doc:",
                 "cal:",
                 "sys:",

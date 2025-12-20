@@ -16,7 +16,7 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 from agent.config.runtime import LLMProfile, LOCAL_PLANNER
-from agent.core.llm.ollama import run_ollama
+from agent.tools.ollama_client import run_ollama
 from agent.workflows import registry as workflow_registry
 from agent.system_artifacts import ArtifactsManager
 
@@ -229,43 +229,7 @@ def _parse_json_from_response(response: str) -> Optional[Dict]:
         return None
 
 
-def _fast_check_ollama(user_request: str) -> Dict[str, Any]:
-    """
-    Stage 1: Fast check to see if Ollama can handle the request on its own.
-    Returns a dict with 'needs_help' (bool) and 'answer' (str, optional).
-    """
-    prompt = f"""You are a helpful AI assistant.
-Can you answer this user request on your own without external tools, memory, or real-time data?
-Request: "{user_request}"
-
-Respond with ONLY valid JSON:
-{{
-    "needs_help": boolean,
-    "answer": "your answer here if needs_help is false"
-}}
-"""
-    response = _call_ollama(prompt, format="json")
-    return _parse_json_from_response(response) or {"needs_help": True}
-
-
 def classify_request(user_request: str) -> ClassificationResult:
-    """
-    Stage 1 & 2: Classify user request into categories and execution plan.
-    Uses a two-stage approach for speed.
-    """
-    # Stage 1: Fast Check
-    fast_check = _fast_check_ollama(user_request)
-    if not fast_check.get("needs_help", True):
-        return ClassificationResult(
-            can_handle_locally=True,
-            local_answer=fast_check.get("answer", ""),
-            categories=[],
-            needs_sequential=False,
-            steps_plan=[],
-            reasoning="Handled locally by fast check"
-        )
-
-    # Stage 2: Full Classification (Existing Logic)
     """
     PROMPT 1: High-level classification
     

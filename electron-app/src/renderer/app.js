@@ -239,10 +239,13 @@ async function sendChatMessage() {
     input.value = '';
     
     // Show processing message
-    const processingId = addProcessingMessage('Processing your request...');
+    let processingId = addProcessingMessage('Thinking...');
+    let responseMessageId = null;
+    let currentContent = '';
+    let stepContent = '';
     
     try {
-        const response = await fetch(`${apiUrl}/api/chat`, {
+        const response = await fetch(`${apiUrl}/api/chat/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -256,57 +259,94 @@ async function sendChatMessage() {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         
-        const data = await response.json();
-        console.log('[Chat] Response:', data);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
         
-        // Remove processing message
-        removeMessage(processingId);
-        
-        // Add response
-        if (data.requires_confirmation && data.draft_id) {
-            // Email draft requires confirmation
-            showEmailConfirmation(data.draft);
-        } else if (data.executed && data.multi_step && data.steps_executed) {
-            // Multi-step execution - show each step
-            let summary = `**Multi-step execution:**\n\n`;
-            for (const step of data.steps_executed) {
-                if (step.status === 'success') {
-                    summary += `[SUCCESS] Step ${step.step}: ${step.description}\n`;
-                    if (step.output) {
-                        summary += `  Output: ${step.output.substring(0, 200)}${step.output.length > 200 ? '...' : ''}\n`;
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n');
+            
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                
+                try {
+                    const data = JSON.parse(line);
+                    
+                    if (data.type === 'status') {
+                        // Update processing message
+                        const processingDiv = document.getElementById(processingId);
+                        if (processingDiv) {
+                            processingDiv.querySelector('.message-content').innerHTML = `
+                                <span class="processing-spinner"></span>
+                                ${escapeHtml(data.message)}
+                            `;
+                        }
+                    } else if (data.type === 'classification') {
+                        // We can show the plan if we want, or just wait for execution
+                        if (data.data.needs_sequential) {
+                             if (processingId) {
+                                 removeMessage(processingId);
+                                 processingId = null;
+                             }
+                             
+                             if (!responseMessageId) {
+                                 currentContent = '**Plan:**\n' + data.data.steps_plan.map((s, i) => `${i+1}. ${s}`).join('\n') + '\n\n---\n\n';
+                                 responseMessageId = addChatMessage('assistant', currentContent);
+                             }
+                        }
+                    } else if (data.type === 'step_start') {
+                        if (processingId) {
+                            removeMessage(processingId);
+                            processingId = null;
+                        }
+                        if (!responseMessageId) {
+                            responseMessageId = addChatMessage('assistant', '');
+                        }
+                        
+                        stepContent += `**Step ${data.step}/${data.total}:** ${data.description}\n`;
+                        updateChatMessage(responseMessageId, currentContent + stepContent);
+                        
+                    } else if (data.type === 'step_complete') {
+                        if (data.status === 'success') {
+                            stepContent += `> ${data.output ? data.output.substring(0, 100) + (data.output.length > 100 ? '...' : '') : 'Done'}\n\n`;
+                        } else {
+                            stepContent += `> ❌ ${data.error || 'Failed'}\n\n`;
+                        }
+                        updateChatMessage(responseMessageId, currentContent + stepContent);
+                        
+                    } else if (data.type === 'result') {
+                        if (processingId) {
+                            removeMessage(processingId);
+                            processingId = null;
+                        }
+                        if (!responseMessageId) {
+                            responseMessageId = addChatMessage('assistant', '');
+                        }
+                        
+                        // If we had steps, append the result. If it was a direct answer, just show it.
+                        if (stepContent) {
+                            currentContent += stepContent + `**Final Result:**\n${data.output}`;
+                        } else {
+                            currentContent = data.output;
+                        }
+                        
+                        if (data.duration) {
+                            currentContent += `\n\n*Time taken: ${data.duration.toFixed(2)}s*`;
+                        }
+                        
+                        updateChatMessage(responseMessageId, currentContent);
+                    } else if (data.type === 'error') {
+                        if (processingId) removeMessage(processingId);
+                        addChatMessage('error', `Error: ${data.message}`);
                     }
-                } else if (step.status === 'failed') {
-                    summary += `[FAILED] Step ${step.step}: ${step.description}\n`;
-                    summary += `  Error: ${step.error}\n`;
-                } else if (step.status === 'expanded') {
-                    summary += `[EXPANDED] Step ${step.step}: ${step.description} (expanded into ${step.expanded_steps ? step.expanded_steps.length : 0} steps)\n`;
-                }
-                summary += '\n';
-            }
-            if (data.output) {
-                summary += `\n**Final Output:**\n${data.output}`;
-            }
-            addChatMessage('assistant', summary);
-        } else if (data.executed && data.output) {
-            // Check if response includes an image
-            if (data.image_url) {
-                addChatMessageWithImage('assistant', data.output, data.image_url);
-            } else {
-                // Check if this is an email list response
-                if (data.output && data.output.includes('From:') && data.output.includes('Subject:')) {
-                    displayEmailListInChat(data.output);
-                } else {
-                    addChatMessage('assistant', data.output);
+                    
+                } catch (e) {
+                    console.error('Error parsing JSON chunk:', e);
                 }
             }
-        } else if (data.error) {
-            addChatMessage('error', `Error: ${data.error}`);
-        } else if (data.preview_steps) {
-            addChatMessage('assistant', `**Plan:**\n${data.preview_steps}\n\n(Preview only - not executed)`);
-        } else if (data.local_answer) {
-            addChatMessage('assistant', data.local_answer);
-        } else {
-            addChatMessage('assistant', `Categories: ${data.categories ? data.categories.join(', ') : 'unknown'}`);
         }
         
         // Clear attached files after sending
@@ -317,7 +357,7 @@ async function sendChatMessage() {
         
     } catch (error) {
         console.error('[Chat] Error:', error);
-        removeMessage(processingId);
+        if (processingId) removeMessage(processingId);
         addChatMessage('error', `Error: ${error.message}`);
     }
 }
@@ -341,6 +381,28 @@ function parseMarkdown(text) {
     text = text.replace(/\n/g, '<br>');
     
     return text;
+}
+
+/**
+ * Update an existing message in chat
+ */
+function updateChatMessage(messageId, content, options = {}) {
+    const messageDiv = document.getElementById(messageId);
+    if (!messageDiv) return;
+    
+    const contentDiv = messageDiv.querySelector('.message-content');
+    if (contentDiv) {
+        const formattedContent = options.skipMarkdown ? escapeHtml(content) : parseMarkdown(escapeHtml(content));
+        // Preserve image if it exists
+        const imageDiv = contentDiv.querySelector('.message-image');
+        contentDiv.innerHTML = formattedContent;
+        if (imageDiv) {
+            contentDiv.appendChild(imageDiv);
+        }
+    }
+    
+    const messagesContainer = document.getElementById('chat-messages');
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
 /**

@@ -20,12 +20,7 @@ from .client import (
     add_meeting_from_email,
     create_and_send_meeting_invite,
 )
-from .priority import (
-    get_priority_emails,
-    add_priority_sender,
-    remove_priority_sender,
-    list_priority_senders,
-)
+
 from agent.workflows import ParameterSpec, WorkflowContext, WorkflowValidationError, register_workflow
 
 _EMAIL_REGEX = re.compile(
@@ -531,126 +526,8 @@ def mail_drafts_handler(ctx: WorkflowContext, params: Dict[str, Any]) -> str:
 
 
 # ============================================================================
-# mail:priority - List priority emails
-# ============================================================================
-
-@register_workflow(
-    namespace="mail",
-    name="priority",
-    summary="List priority emails",
-    description="Lists emails from priority senders.",
-    parameters=(
-        ParameterSpec(
-            name="last",
-            description="Number of priority emails to list",
-            type=int,
-            default=10,
-            aliases=["count", "max"]
-        ),
-    ),
-    metadata={
-        "category": "MAIL COMMANDS",
-        "usage": "mail:priority [last N]",
-        "returns": "str",
-        "examples": ["mail:priority", "mail:priority last 5"],
-    },
-)
-def mail_priority_handler(ctx: WorkflowContext, params: Dict[str, Any]) -> str:
-    """Workflow handler for listing priority emails."""
-    count = params.get("last", 10)
-    return get_priority_emails(count)
 
 
-# ============================================================================
-# mail:priority-add - Add priority sender
-# ============================================================================
-
-@register_workflow(
-    namespace="mail",
-    name="priority-add",
-    summary="Add priority sender",
-    description="Adds an email address or domain to the priority senders list.",
-    parameters=(
-        ParameterSpec(
-            name="identifier",
-            description="Email address or @domain to add",
-            type=str,
-            required=True,
-        ),
-    ),
-    metadata={
-        "category": "MAIL COMMANDS",
-        "usage": "mail:priority-add EMAIL|@DOMAIN",
-        "returns": "str",
-        "examples": [
-            "mail:priority-add boss@company.com",
-            "mail:priority-add @important-domain.com"
-        ],
-    },
-)
-def mail_priority_add_handler(ctx: WorkflowContext, params: Dict[str, Any]) -> str:
-    """Workflow handler for adding priority senders."""
-    identifier = params.get("identifier")
-    if not identifier:
-        raise WorkflowValidationError("Email or domain identifier is required")
-    return add_priority_sender(identifier)
-
-
-# ============================================================================
-# mail:priority-remove - Remove priority sender
-# ============================================================================
-
-@register_workflow(
-    namespace="mail",
-    name="priority-remove",
-    summary="Remove priority sender",
-    description="Removes an email address or domain from the priority senders list.",
-    parameters=(
-        ParameterSpec(
-            name="identifier",
-            description="Email address or @domain to remove",
-            type=str,
-            required=True,
-        ),
-    ),
-    metadata={
-        "category": "MAIL COMMANDS",
-        "usage": "mail:priority-remove EMAIL|@DOMAIN",
-        "returns": "str",
-        "examples": [
-            "mail:priority-remove boss@company.com",
-            "mail:priority-remove @important-domain.com"
-        ],
-    },
-)
-def mail_priority_remove_handler(ctx: WorkflowContext, params: Dict[str, Any]) -> str:
-    """Workflow handler for removing priority senders."""
-    identifier = params.get("identifier")
-    if not identifier:
-        raise WorkflowValidationError("Email or domain identifier is required")
-    return remove_priority_sender(identifier)
-
-
-# ============================================================================
-# mail:priority-list - List priority senders
-# ============================================================================
-
-@register_workflow(
-    namespace="mail",
-    name="priority-list",
-    summary="Show priority configuration",
-    description="Lists all configured priority senders.",
-    parameters=(),
-    metadata={
-        "category": "MAIL COMMANDS",
-        "usage": "mail:priority-list",
-        "returns": "str",
-        "examples": ["mail:priority-list"],
-    },
-)
-def mail_priority_list_handler(ctx: WorkflowContext, params: Dict[str, Any]) -> str:
-    """Workflow handler for listing priority senders."""
-    return list_priority_senders()
 
 
 # ============================================================================

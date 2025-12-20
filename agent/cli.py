@@ -174,18 +174,11 @@ def do(action: str = typer.Argument(..., help="Action to perform")):
         clai do "mail:list last 5"
         clai do "mail:view id:MSG_ID"                 - View full email
         clai do "mail:download id:MSG_ID"             - Download attachments
-        clai do "mail:priority last 10"               - View priority emails
         
         # Email - Meetings
         clai do "mail:scan-meetings"                  - Scan for meeting invites
         clai do "mail:add-meeting email-id:MSG_ID"    - Add meeting to calendar
         clai do "mail:invite to:user@test.com subject:Sync time:2025-10-15T14:00:00 duration:30"
-        
-        # Email - Priority Management
-        clai do "mail:priority-add user@test.com"
-        clai do "mail:priority-add @company.com"
-        clai do "mail:priority-list"
-        clai do "mail:priority-remove user@test.com"
         
         # Calendar
         clai do "calendar:create title:Meeting start:2025-10-15T14:00:00 duration:30"
@@ -198,7 +191,7 @@ def do(action: str = typer.Argument(..., help="Action to perform")):
         clai do "task:toggle 1"                       - Enable/disable task
         
         # Cascading Commands
-        clai do "mail:scan-meetings && mail:priority last 5"
+        clai do "mail:scan-meetings"
     """
     typer.echo("")
     typer.secho(f"🤖 Executing: {action}", fg=typer.colors.YELLOW)
@@ -391,7 +384,7 @@ Available commands (use 'clai do "COMMAND"'):
     mail:draft to:EMAIL subject:TEXT      - Create draft
     mail:reply id:MSG_ID                  - Reply to email
     mail:send to:EMAIL subject:TEXT       - Send email
-    mail:priority [last N]                - Priority inbox
+
     mail:scan-meetings                    - Scan for meetings
     
   📅 Calendar Commands:
@@ -415,7 +408,7 @@ Available commands (use 'clai do "COMMAND"'):
     system:reauth                         - Re-authenticate
     
   🔗 Cascading:
-    Use && to chain: "mail:list && mail:priority"
+    Use && to chain: "mail:list && calendar:list"
 
 For natural language: clai auto "your instruction"
 """

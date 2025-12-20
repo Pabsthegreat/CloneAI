@@ -112,8 +112,7 @@ def get_command_suggestions(user_input: str) -> List[str]:
     if any(word in lower_input for word in ["email", "mail", "inbox", "message"]):
         suggestions.extend([
             "mail:list last 10",
-            "mail:list from user@example.com",
-            "mail:priority"
+            "mail:list from user@example.com"
         ])
     
     # Calendar suggestions

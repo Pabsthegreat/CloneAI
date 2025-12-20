@@ -26,7 +26,20 @@ cd electron-app && npm start
 
 **See:** [electron-app/README.md](electron-app/README.md) for full desktop app documentation
 **See:** [AUTOSTART.md](AUTOSTART.md) for auto-start setup
+## 📚 Documentation Index
 
+Explore the documentation for each component of the system:
+
+*   **[Agent Core](agent/README.md)**: Overview of the Python backend structure.
+    *   **[Core Logic](agent/core/README.md)**: The "Brain" (Planning, LLM, Memory).
+        *   [LLM Clients](agent/core/llm/README.md)
+        *   [Planners](agent/core/planning/README.md)
+    *   **[Skills](agent/skills/README.md)**: The "Hands" (Modular capabilities).
+        *   [Mail Skill](agent/skills/mail/README.md)
+    *   **[API Server](agent/server/README.md)**: The FastAPI server for the desktop app.
+    *   **[Workflow Registry](agent/workflows/README.md)**: How commands are registered.
+*   **[Electron App](electron-app/README.md)**: Frontend documentation.
+*   **[Tests](tests/README.md)**: Testing guide.
 ## � Complete Documentation
 
 **👉 [READ THE COMPLETE GUIDE](docs/COMPLETE_GUIDE.md)** - Everything you need in one place!

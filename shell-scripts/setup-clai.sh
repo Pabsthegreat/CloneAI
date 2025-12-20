@@ -5,14 +5,17 @@
 # Get the CloneAI directory automatically
 if [ -n "${BASH_SOURCE[0]}" ]; then
     # Bash
-    CLONEAI_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 elif [ -n "${(%):-%x}" ]; then
     # Zsh
-    CLONEAI_PATH="$(cd "$(dirname "${(%):-%x}")" && pwd)"
+    SCRIPT_DIR="$(cd "$(dirname "${(%):-%x}")" && pwd)"
 else
     # Fallback - assume current directory
-    CLONEAI_PATH="$(pwd)"
+    SCRIPT_DIR="$(pwd)"
 fi
+
+# The project root is one level up from shell-scripts
+CLONEAI_PATH="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Change to CloneAI directory to run commands with auto-venv activation
 clai() {

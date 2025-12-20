@@ -15,7 +15,8 @@ if pgrep -f "agent.server.api" > /dev/null; then
     echo "[$(date)] Backend already running, skipping..." >> "$LOG_FILE"
 else
     echo "[$(date)] Starting Python backend..." >> "$LOG_FILE"
-    cd "$SCRIPT_DIR"
+    # Navigate to project root (one level up from shell-scripts)
+    cd "$SCRIPT_DIR/.."
     
     # Start backend in background
     source .venv/bin/activate
@@ -32,7 +33,8 @@ if pgrep -f "electron.*cloneai" > /dev/null; then
     echo "[$(date)] Electron app already running, skipping..." >> "$LOG_FILE"
 else
     echo "[$(date)] Starting Electron UI..." >> "$LOG_FILE"
-    cd "$SCRIPT_DIR/electron-app"
+    # Navigate to electron-app (sibling of shell-scripts)
+    cd "$SCRIPT_DIR/../electron-app"
     
     # Start Electron app (it will run in foreground but detached)
     nohup npm start >> /tmp/cloneai-ui.log 2>&1 &
