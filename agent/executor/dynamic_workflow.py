@@ -317,7 +317,7 @@ class WorkflowGenerationManager:
             pass
         # Clear tiered planner cache as well
         try:
-            from agent.tools.tiered_planner import clear_command_cache
+            from agent.core.planning.tiered import clear_command_cache
             clear_command_cache()
         except (ImportError, AttributeError):
             pass

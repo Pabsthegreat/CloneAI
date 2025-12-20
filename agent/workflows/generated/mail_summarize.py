@@ -3,8 +3,8 @@
 from typing import Any, Dict
 
 from agent.config.runtime import LOCAL_PLANNER
-from agent.tools.mail import get_full_email
-from agent.tools.ollama_client import run_ollama
+from agent.skills.mail.client import get_full_email
+from agent.core.llm.ollama import run_ollama
 from agent.workflows import ParameterSpec, WorkflowContext, register_workflow
 
 

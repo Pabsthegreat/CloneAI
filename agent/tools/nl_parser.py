@@ -10,7 +10,7 @@ import os
 from typing import Dict, List, Optional
 
 from agent.config.runtime import LOCAL_PLANNER
-from agent.tools.ollama_client import run_ollama
+from agent.core.llm.ollama import run_ollama
 from agent.workflows import build_command_reference
 
 # Command documentation for the LLM (generated from the workflow registry plus legacy commands)

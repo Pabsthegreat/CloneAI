@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Any
 import requests
 
 from agent.config.runtime import LOCAL_PLANNER
-from agent.tools.ollama_client import run_ollama
+from agent.core.llm.ollama import run_ollama
 from agent.tools.serper_credentials import get_serper_api_key
 
 

@@ -248,7 +248,7 @@ def search_deep_handler(ctx: WorkflowContext, params: Dict[str, Any]) -> str:
     import requests
     from bs4 import BeautifulSoup
     from agent.tools.web_search import WebSearchTool
-    from agent.tools.ollama_client import run_ollama
+    from agent.core.llm.ollama import run_ollama
     from agent.config.runtime import LOCAL_PLANNER
     
     query = params.get("query")

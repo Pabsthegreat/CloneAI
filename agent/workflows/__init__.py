@@ -52,6 +52,18 @@ def load_builtin_workflows(modules: Iterable[str] | None = None) -> None:
             # Log but don't fail - allow partial loading
             print(f"Warning: Failed to load workflow module '{module_name}': {e}")
     
+    # Also load workflows from skills directory
+    skills_dir = Path(__file__).parent.parent / "skills"
+    if skills_dir.exists():
+        for skill_dir in skills_dir.iterdir():
+            if skill_dir.is_dir():
+                workflow_file = skill_dir / "workflows.py"
+                if workflow_file.exists():
+                    try:
+                        import_module(f"agent.skills.{skill_dir.name}.workflows")
+                    except ImportError as e:
+                        print(f"Warning: Failed to load skill workflow '{skill_dir.name}': {e}")
+
     # Load generated workflows
     load_generated_workflows()
 

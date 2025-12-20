@@ -15,7 +15,7 @@ import time
 from typing import Iterable, Optional, Tuple
 
 from .speaker import TextToSpeechEngine
-from agent.tools.ollama_client import run_ollama
+from agent.core.llm.ollama import run_ollama
 from agent.config.runtime import LOCAL_PLANNER
 from .recognizer import (
     SpeechRecognizer,

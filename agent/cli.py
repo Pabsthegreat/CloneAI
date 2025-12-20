@@ -40,7 +40,7 @@ load_builtin_workflows()
 
 # Warm up Ollama models in background for faster first response
 try:
-    from agent.tools.ollama_client import warmup_model
+    from agent.core.llm.ollama import warmup_model
     from agent.config.runtime import LOCAL_PLANNER
     warmup_model(LOCAL_PLANNER)
 except Exception:
@@ -478,7 +478,7 @@ def auto(
         latency_metrics.append((label, time.perf_counter() - start_marker))
 
     try:
-        from agent.tools.tiered_planner import (
+        from agent.core.planning.tiered import (
             classify_request,
             plan_step_execution,
             WorkflowMemory
@@ -745,7 +745,7 @@ def auto(
                 
                 # Simple check: if original request mentioned a number and we have that many items in context
                 # Ask LLM if we've covered all of them
-                from agent.tools.tiered_planner import _call_ollama, _parse_json_from_response
+                from agent.core.planning.tiered import _call_ollama, _parse_json_from_response
                 
                 check_prompt = f"""Given the completed workflow, determine if the goal is fully achieved.
 

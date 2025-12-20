@@ -932,7 +932,7 @@ def scan_emails_for_meetings(hours_back: int = 24, auto_add: bool = True) -> str
         Formatted list of detected meetings
     """
     try:
-        from agent.tools.email_parser import EmailParser
+        from .parser import EmailParser
         from agent.tools.calendar import CalendarClient
         
         client = GmailClient()
@@ -1032,7 +1032,7 @@ def add_meeting_from_email(message_id: str, custom_time: Optional[str] = None) -
         Success message
     """
     try:
-        from agent.tools.email_parser import EmailParser
+        from .parser import EmailParser
         from agent.tools.calendar import CalendarClient
         
         email_client = GmailClient()

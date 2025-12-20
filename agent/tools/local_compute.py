@@ -14,7 +14,7 @@ from agent.config.runtime import (
     LOCAL_COMMAND_CLASSIFIER,
     topic_list,
 )
-from agent.tools.ollama_client import run_ollama
+from agent.core.llm.ollama import run_ollama
 
 
 def _build_classifier_prompt(instruction: str) -> str:

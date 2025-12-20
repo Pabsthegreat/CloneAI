@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Optional, List
 
 from agent.config.runtime import LOCAL_COMMAND_CLASSIFIER
-from agent.tools.ollama_client import run_ollama
+from agent.core.llm.ollama import run_ollama
 
 
 @dataclass

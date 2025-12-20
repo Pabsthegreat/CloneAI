@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 
 # CloneAI imports
 from agent.cli import execute_single_command
-from agent.tools.tiered_planner import classify_request, plan_step_execution, WorkflowMemory
+from agent.core.planning.tiered import classify_request, plan_step_execution, WorkflowMemory
 from agent.workflows import registry as workflow_registry
 from agent.system_artifacts import ArtifactsManager
 

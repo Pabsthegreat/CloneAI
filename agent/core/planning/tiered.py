@@ -16,7 +16,7 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 from agent.config.runtime import LLMProfile, LOCAL_PLANNER
-from agent.tools.ollama_client import run_ollama
+from agent.core.llm.ollama import run_ollama
 from agent.workflows import registry as workflow_registry
 from agent.system_artifacts import ArtifactsManager
 

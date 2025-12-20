@@ -3,7 +3,7 @@ CloneAI Tools Package
 Contains utility modules for various agent actions.
 """
 
-from .mail import (
+from agent.skills.mail.client import (
     list_emails,
     create_draft_email,
     list_drafts_emails,

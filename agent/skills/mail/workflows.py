@@ -6,7 +6,7 @@ import re
 import shlex
 from typing import Any, Dict, Optional, List
 
-from agent.tools.mail import (
+from .client import (
     get_email_messages,
     format_email_list,
     get_full_email,
@@ -20,7 +20,7 @@ from agent.tools.mail import (
     add_meeting_from_email,
     create_and_send_meeting_invite,
 )
-from agent.tools.priority_emails import (
+from .priority import (
     get_priority_emails,
     add_priority_sender,
     remove_priority_sender,

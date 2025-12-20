@@ -1,7 +1,7 @@
 from agent.workflows import register_workflow
 from agent.workflows.registry import ParameterSpec, WorkflowContext
 from typing import Dict, Any
-from agent.tools.ollama_client import run_ollama
+from agent.core.llm.ollama import run_ollama
 from agent.config.runtime import LOCAL_PLANNER
 import pathlib
 import docx

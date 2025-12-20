@@ -227,7 +227,7 @@ def get_priority_emails(count: int = 10, query: Optional[str] = None) -> str:
         Formatted email list
     """
     try:
-        from agent.tools.mail import GmailClient, format_email_list
+        from .client import GmailClient, format_email_list
         
         manager = PriorityEmailManager()
         config = manager.get_priority_list()
