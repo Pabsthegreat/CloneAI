@@ -1,0 +1,14 @@
+# Voice and Speech Recognition (optional)
+# macOS, Linux, Windows compatible
+SpeechRecognition==3.10.4
+sounddevice==0.5.3
+
+# Text-to-Speech (platform-specific)
+pyttsx3==2.99  # Cross-platform TTS
+
+# Advanced TTS (optional, large dependencies)
+# coqui-tts>=0.0.25
+# faster-whisper==1.2.0
+
+# Audio processing
+# PyAudio==0.2.14  # Requires portaudio (brew install portaudio on macOS)

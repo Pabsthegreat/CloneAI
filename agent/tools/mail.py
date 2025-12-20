@@ -170,7 +170,7 @@ class GmailClient:
             Dict with draft info
         """
         if not self.service:
-            self._authenticate()
+            self.authenticate()
         
         try:
             # Create message with or without attachments

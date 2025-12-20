@@ -22,6 +22,7 @@ import uuid
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 # CloneAI imports
@@ -233,7 +234,8 @@ async def execute_command(req: CommandRequest):
     """
     try:
         logger.info(f"Executing command: {req.command}")
-        result = execute_single_command(req.command, extras=req.extras)
+        # Run blocking command in thread pool to avoid blocking event loop
+        result = await run_in_threadpool(execute_single_command, req.command, extras=req.extras)
         
         return {
             "success": True,
@@ -254,8 +256,8 @@ async def analyze_chat_request(req: ChatRequest):
     try:
         logger.info(f"Analyzing request: {req.message}")
         
-        # Use tiered planner to classify request
-        classification = classify_request(req.message)
+        # Use tiered planner to classify request (run in thread pool)
+        classification = await run_in_threadpool(classify_request, req.message)
         
         response = {
             "success": True,
@@ -289,8 +291,8 @@ async def chat(req: ChatRequest):
     try:
         logger.info(f"Chat request: {req.message} (execute={req.execute})")
         
-        # Classify request
-        classification = classify_request(req.message)
+        # Classify request (run in thread pool)
+        classification = await run_in_threadpool(classify_request, req.message)
         
         response = {
             "success": True,
@@ -336,7 +338,8 @@ async def chat(req: ChatRequest):
                         try:
                             # Use plan_step_execution to convert natural language to CLI command
                             # This matches the CLI's behavior exactly
-                            execution_plan = plan_step_execution(
+                            execution_plan = await run_in_threadpool(
+                                plan_step_execution,
                                 current_step_instruction=step_instruction,
                                 memory=memory,
                                 categories=classification.categories
@@ -401,8 +404,8 @@ async def chat(req: ChatRequest):
                                 })
                                 continue
                             
-                            # Execute the CLI command
-                            step_output = execute_single_command(command_to_run)
+                            # Execute the CLI command (in thread pool)
+                            step_output = await run_in_threadpool(execute_single_command, command_to_run)
                             
                             # Store in memory for next step
                             memory.add_step(

@@ -287,7 +287,10 @@ ACTIONS (create workflow steps): Tasks requiring command execution like "send em
 
 JSON only:"""
 
-    print(prompt)
+    # Debug logging controlled by env var
+    if os.getenv("CLAI_DEBUG") == "1":
+        print(f"[NL_PARSER] Prompt length: {len(prompt)} chars")
+    
     response = call_ollama(prompt, model)
     
     if not response:

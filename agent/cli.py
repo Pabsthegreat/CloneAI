@@ -20,11 +20,15 @@ from agent.config.runtime import (
 from agent.tools.local_compute import can_local_llm_handle
 from agent.config.autotune import apply_runtime_autotune
 from agent.voice import get_voice_manager
+from functools import lru_cache
 
 app = typer.Typer(help="Your personal CLI agent", no_args_is_help=True)
 
 # Initialize artifacts directories
 ArtifactsManager.initialize()
+
+# Guardrail cache - memoize safety verdicts for repeated queries
+_guardrail_cache: Dict[str, Any] = {}
 
 # Apply system-based defaults for env vars, then ensure built-ins are registered.
 try:
@@ -33,6 +37,15 @@ except Exception:
     # Non-fatal if auto-tune fails; continue with defaults
     pass
 load_builtin_workflows()
+
+# Warm up Ollama models in background for faster first response
+try:
+    from agent.tools.ollama_client import warmup_model
+    from agent.config.runtime import LOCAL_PLANNER
+    warmup_model(LOCAL_PLANNER)
+except Exception:
+    # Non-fatal if warmup fails
+    pass
 
 VOICE_MODE_ACTIVATE_PHRASES = (
     "activate voice mode",
@@ -59,7 +72,7 @@ VOICE_MODE_DEACTIVATE_PHRASES = (
 )
 
 
-def _detect_voice_mode_intent(instruction: str) -> Optional[str]:
+def _detect_voice_mode_intent(instruction: str) -> Optional[str]: #
     """Return 'activate' or 'deactivate' if the instruction targets voice mode."""
     normalized = instruction.strip().lower()
     normalized = re.sub(r"\s+", " ", normalized)
@@ -119,8 +132,6 @@ def hi():
     typer.echo("")
     typer.echo("🤖 Processing your request...")
     
-    # TODO: Add your actual processing logic here
-    # For now, just acknowledge the input
     output = f"I understand you want to: {user_input}\n(This is where your agent logic will go)"
     typer.echo(output)
     
@@ -446,15 +457,6 @@ def auto(
             first_token_reported = True
             _print_first_token_latency(start_time)
 
-    start_time = time.perf_counter()
-    first_token_reported = False
-
-    def report_latency_once() -> None:
-        nonlocal first_token_reported
-        if not first_token_reported:
-            first_token_reported = True
-            _print_first_token_latency(start_time)
-
     voice_intent = _detect_voice_mode_intent(instruction)
     if voice_intent == "activate":
         typer.secho("\n🎙️  Activating conversational voice mode...", fg=typer.colors.CYAN, bold=True)
@@ -488,24 +490,31 @@ def auto(
         typer.echo("")
         
         # ============================================================
-        # GUARDRAIL: Safety Check (Optional - only if model available)
+        # GUARDRAIL: Safety Check (with caching)
         # ============================================================
-        # if is_model_available("qwen3:4b-instruct"):
-        #     typer.secho("🛡️  Running safety check...", fg=typer.colors.YELLOW, dim=True)
-        #     safety_result = check_query_safety(instruction)
-            
-        #     if not safety_result.is_allowed:
-        #         typer.echo("")
-        #         typer.secho("❌ Query blocked by safety guardrails", fg=typer.colors.RED, bold=True)
-        #         typer.echo(f"   Category: {safety_result.category}")
-        #         typer.echo(f"   Reason: {safety_result.reason}")
-        #         typer.echo("")
-        #         typer.secho("ℹ️  This system is designed for legitimate productivity and development tasks.", 
-        #                    fg=typer.colors.BLUE)
-        #         return
-        #     typer.secho("   ✓ Safety check passed", fg=typer.colors.GREEN, dim=True)
+        if instruction not in _guardrail_cache and is_model_available("qwen3:4b-instruct"):
+            typer.secho("🛡️  Running safety check...", fg=typer.colors.YELLOW, dim=True)
+            safety_result = check_query_safety(instruction)
+            _guardrail_cache[instruction] = safety_result
+        elif instruction in _guardrail_cache:
+            safety_result = _guardrail_cache[instruction]
+        else:
+            safety_result = None
         
-        # typer.echo("")
+        if safety_result and not safety_result.is_allowed:
+            typer.echo("")
+            typer.secho("❌ Query blocked by safety guardrails", fg=typer.colors.RED, bold=True)
+            typer.echo(f"   Category: {safety_result.category}")
+            typer.echo(f"   Reason: {safety_result.reason}")
+            typer.echo("")
+            typer.secho("ℹ️  This system is designed for legitimate productivity and development tasks.", 
+                       fg=typer.colors.BLUE)
+            return
+        
+        if safety_result:
+            typer.secho("   ✓ Safety check passed", fg=typer.colors.GREEN, dim=True)
+        
+        typer.echo("")
         
         # ============================================================
         # PROMPT 1: High-Level Classification

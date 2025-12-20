@@ -1400,8 +1400,7 @@ clai auto "download attachments from my last 3 emails from john@example.com"
 3. **Add to .gitignore** if sharing code:
    ```
    .clai/
-   credentials.json
-   credentials1.json
+    credentials*.json
    token.pickle
    ```
 
@@ -1566,8 +1565,7 @@ C:\Users\<YourUsername>\OneDrive\Documents\CloneAI\
 ├── .venv/  # Virtual environment
 ├── setup-clai.ps1  # PowerShell setup script
 ├── requirements.txt  # Python dependencies
-├── credentials.json  # (Optional) Your credentials backup
-└── credentials1.json  # (Optional) Your credentials backup
+└── credentials*.json  # (Optional) Your credentials backup(s)
 ```
 
 ### User Configuration Files

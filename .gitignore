@@ -3,6 +3,13 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.DS_Store
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+.TemporaryItems
+.fseventsd
 .Python
 *.so
 *.egg
@@ -10,6 +17,30 @@ __pycache__/
 dist/
 build/
 artifacts/
+
+# Editor / tooling caches
+.vscode/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Logs / temp files
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+**/*.backup
+**/*.bak
+
+# Env / credentials
+.env
+.env.*
+credentials*.json
+
 # CloneAI specific
 .clai/
 **/command_history.json

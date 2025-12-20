@@ -315,6 +315,12 @@ class WorkflowGenerationManager:
             build_command_reference.cache_clear()
         except AttributeError:
             pass
+        # Clear tiered planner cache as well
+        try:
+            from agent.tools.tiered_planner import clear_command_cache
+            clear_command_cache()
+        except (ImportError, AttributeError):
+            pass
 
 
 dynamic_manager = WorkflowGenerationManager()

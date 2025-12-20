@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 from agent.config.runtime import LLMProfile, LOCAL_PLANNER
@@ -124,10 +126,48 @@ def _get_available_categories() -> List[str]:
             categories.add(spec.namespace)
     
     # Add known categories even if no workflows registered yet
-    known_categories = ["mail", "calendar", "task", "tasks", "doc", "convert", "merge", "system", "math", "text", "image"]
+    known_categories = ["mail", "calendar", "task", "tasks", "doc", "convert", "merge", "system", "math", "text", "image", "search"]
     categories.update(known_categories)
     
     return sorted(list(categories))
+
+
+def clear_command_cache() -> None:
+    """Clear the command reference cache when workflows are added/removed."""
+    _get_commands_for_category.cache_clear()
+
+
+@lru_cache(maxsize=32)
+def _get_commands_for_category(category: str) -> str:
+    """
+    Get command reference for a single category.
+    Cached to avoid rebuilding the same category text repeatedly.
+    """
+    specs = [s for s in workflow_registry.list() if s.namespace == category]
+    
+    if not specs:
+        return f"  • No commands available yet (may need generation)"
+    
+    command_ref = []
+    for spec in specs:
+        usage = spec.metadata.get("usage", spec.command_key()) if spec.metadata else spec.command_key()
+        description = spec.summary or spec.description or "No description"
+        command_ref.append(f"  • {usage}")
+        command_ref.append(f"    Description: {description}")
+        
+        # Add parameter details so LLM understands what the command can do
+        if spec.parameters:
+            params_info = []
+            for param in spec.parameters:
+                param_desc = f"{param.name}"
+                if param.required:
+                    param_desc += " (required)"
+                if param.description:
+                    param_desc += f": {param.description}"
+                params_info.append(param_desc)
+            command_ref.append(f"    Parameters: {', '.join(params_info)}")
+    
+    return "\n".join(command_ref)
 
 
 def _get_commands_for_categories(categories: List[str]) -> str:
@@ -136,6 +176,7 @@ def _get_commands_for_categories(categories: List[str]) -> str:
     This is the key to token efficiency!
     
     Returns detailed command info with parameters so LLM understands capabilities.
+    Uses per-category caching to avoid rebuilding the entire catalog.
     """
     if not categories:
         return ""
@@ -143,29 +184,8 @@ def _get_commands_for_categories(categories: List[str]) -> str:
     command_ref = []
     for category in categories:
         command_ref.append(f"\n{category.upper()} COMMANDS:")
-        
-        # Get workflows for this category
-        specs = workflow_registry.list(namespace=category)
-        if specs:
-            for spec in specs:
-                usage = spec.metadata.get("usage", spec.command_key()) if spec.metadata else spec.command_key()
-                description = spec.summary or spec.description or "No description"
-                command_ref.append(f"  • {usage}")
-                command_ref.append(f"    Description: {description}")
-                
-                # Add parameter details so LLM understands what the command can do
-                if spec.parameters:
-                    params_info = []
-                    for param in spec.parameters:
-                        param_desc = f"{param.name}"
-                        if param.required:
-                            param_desc += " (required)"
-                        if param.description:
-                            param_desc += f": {param.description}"
-                        params_info.append(param_desc)
-                    command_ref.append(f"    Parameters: {', '.join(params_info)}")
-        else:
-            command_ref.append(f"  • No commands available yet (may need generation)")
+        # Use cached per-category lookup
+        command_ref.append(_get_commands_for_category(category))
     
     return "\n".join(command_ref)
 
@@ -220,6 +240,10 @@ def classify_request(user_request: str) -> ClassificationResult:
     - Natural language step-by-step plan
     
     This prompt uses ONLY category names, not full commands (token efficient!)
+    
+    Prompt is structured for Ollama KV-cache:
+    - Static prefix: System instructions, rules, examples (cached)
+    - Dynamic suffix: User request only (computed fresh)
     """
     
     available_categories = _get_available_categories()
@@ -230,9 +254,9 @@ def classify_request(user_request: str) -> ClassificationResult:
     tz_offset = current_time.strftime('%z')  # e.g., +0530
     tz_offset_formatted = f"{tz_offset[:3]}:{tz_offset[3:]}" if len(tz_offset) >= 5 else tz_offset
     
+    # CRITICAL: Static content first, dynamic (user request) last
+    # This allows Ollama to cache the KV states of the static instructions
     prompt = f"""You are a task classifier for CloneAI. Analyze the request and determine the execution strategy.
-
-USER REQUEST: "{user_request}"
 
 AVAILABLE COMMAND CATEGORIES: {categories_text}
 
@@ -294,10 +318,18 @@ Respond with ONLY valid JSON (no markdown):
   "reasoning": "Brief explanation of the strategy"
 }}
 
+---
+
+USER REQUEST: "{user_request}"
+
 JSON only:"""
-    #print(prompt)
+    
     response = _call_ollama(prompt)
-    print(f"\n[Classification Response]: {response}\n")
+    
+    # Debug logging controlled by env var
+    if os.getenv("CLAI_DEBUG") == "1":
+        print(f"[TIERED_PLANNER] Classification: {response[:200]}...")
+    
     parsed = _parse_json_from_response(response)
     
     if not parsed:
@@ -330,6 +362,13 @@ JSON only:"""
     )
 
 
+def _build_memory_text(memory: Optional[WorkflowMemory]) -> str:
+    """Build memory context text for prompt."""
+    if not memory:
+        return ""
+    return f"WORKFLOW MEMORY:\n{memory.get_summary()}"
+
+
 def plan_step_execution(
     current_step_instruction: str,
     memory: Optional[WorkflowMemory] = None,
@@ -348,6 +387,10 @@ def plan_step_execution(
     - command: The specific command to execute
     - needs_new_workflow: Should we call GPT to generate new workflow?
     - gpt_generation_prompt: Natural language prompt for GPT (if needs_new_workflow)
+    
+    Prompt is structured for Ollama KV-cache:
+    - Static prefix: System instructions, rules, available commands (cached)
+    - Dynamic suffix: Current step + memory context (computed fresh)
     """
     
     if not categories:
@@ -355,11 +398,6 @@ def plan_step_execution(
     
     # Get commands for relevant categories only (token efficient!)
     commands_text = _get_commands_for_categories(categories)
-    
-    # Build memory context if available
-    memory_text = ""
-    if memory:
-        memory_text = f"\n\nWORKFLOW MEMORY:\n{memory.get_summary()}"
     
     # Get recent artifacts info for context
     recent_artifacts = ArtifactsManager.get_recent_artifacts(limit=20)
@@ -376,14 +414,13 @@ def plan_step_execution(
     tz_offset = current_time.strftime('%z')  # e.g., +0530
     tz_offset_formatted = f"{tz_offset[:3]}:{tz_offset[3:]}" if len(tz_offset) >= 5 else tz_offset
     
+    # CRITICAL: Static content first (system instructions, rules, commands), dynamic last (step + memory)
+    # This allows Ollama to cache the KV states of the static instructions
     prompt = f"""You are a step executor for CloneAI. Execute a single workflow step.
-
-CURRENT STEP: "{current_step_instruction}"
-{memory_text}
-{artifacts_text}
 
 AVAILABLE COMMANDS (from categories: {', '.join(categories)}):
 {commands_text}
+{artifacts_text}
 
 Current date and time: {current_time.strftime('%A, %B %d, %Y at %I:%M %p')} {tz_name} (UTC{tz_offset_formatted})
 
@@ -506,6 +543,12 @@ For NEEDS_NEW_WORKFLOW:
 - Suggest namespace from: {', '.join(categories)}
 - Include "gpt_prompt" with: user intent, required parameters, expected output, important context
 
+---
+
+CURRENT STEP: "{current_step_instruction}"
+
+{_build_memory_text(memory)}
+
 JSON only:"""
 
     response = _call_ollama(prompt)
@@ -557,5 +600,5 @@ __all__ = [
     "ClassificationResult", 
     "StepExecutionPlan",
     "classify_request",
-    "plan_step_execution"
+    "plan_step_execution",
 ]

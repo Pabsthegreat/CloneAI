@@ -1,0 +1,7 @@
+# macOS-specific system integration (optional)
+# Only install on macOS systems
+pyobjc-framework-Cocoa==11.1
+pyobjc-framework-AppleScriptObjC==11.1
+pyobjc-framework-EventKit==11.1  # Calendar access
+pyobjc-framework-Contacts==11.1  # Contacts access
+pyobjc-framework-ScriptingBridge==11.1  # AppleScript bridge

@@ -42,6 +42,9 @@ class LLMProfile:
     top_k: int = 1
     seed: int = 42
     repeat_penalty: float = 1.0
+    num_ctx: int = 4096  # Context window size - smaller = faster prefill
+    num_gpu: int = 99  # Layers to offload to GPU (99 = all)
+    num_batch: int = 512  # Batch size for prompt processing
 
     def to_ollama_options(self) -> Dict[str, float]:
         """Return deterministic Ollama generation settings."""
@@ -51,6 +54,9 @@ class LLMProfile:
             "top_k": self.top_k,
             "repeat_penalty": self.repeat_penalty,
             "seed": self.seed,
+            "num_ctx": self.num_ctx,
+            "num_gpu": self.num_gpu,
+            "num_batch": self.num_batch,
         }
 
 

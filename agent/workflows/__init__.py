@@ -18,7 +18,6 @@ from .registry import (
     register_workflow,
     registry,
 )
-from .catalog import LEGACY_NOTES
 
 _GENERATED_PACKAGE = f"{__name__}.generated"
 
@@ -76,7 +75,7 @@ def load_generated_workflows() -> None:
 
 
 @lru_cache(maxsize=2)
-def build_command_reference(include_legacy: bool = True) -> str:
+def build_command_reference() -> str:
     """
     Build a textual command reference that includes registered workflows and
     legacy commands not yet migrated to the registry.
@@ -102,9 +101,6 @@ def build_command_reference(include_legacy: bool = True) -> str:
         lines.append(f"{category}:")
         lines.extend(sections[category])
         lines.append("")
-
-    if include_legacy and LEGACY_NOTES.strip():
-        lines.append(LEGACY_NOTES.strip())
 
     return "\n".join(lines).strip() + "\n"
 
