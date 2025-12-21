@@ -244,7 +244,7 @@ Respond with ONLY valid JSON:
     "answer": "your answer here if needs_help is false"
 }}
 """
-    response = _call_ollama(prompt, format="json")
+    response = _call_ollama(prompt)
     return _parse_json_from_response(response) or {"needs_help": True}
 
 
@@ -529,24 +529,32 @@ For EXECUTE_COMMAND:
 - DO NOT use function syntax with parentheses: namespace:action(param:value)
 - DO NOT use brackets for optional parameters: [param:value] is WRONG, just param:value
 - Use REAL IDs from "Available Context" (e.g., id:199e85d5b5b09017, NOT id:1)
-- CRITICAL QUOTING RULES:
-  * ALL parameter values containing spaces, punctuation, or special characters MUST be quoted with double quotes
-  * Examples of CORRECT quoting:
-    - title:"Meeting with John Smith"
-    - body:"Thank you for your message. I will follow up soon."
-    - subject:"Importance of Physical Activity"
-    - to:"user@example.com"
-  * Examples of WRONG (will fail):
-    - title:Meeting with John Smith
-    - body:Thank you for your message
-    - subject:Importance of Physical Activity
-  * Single-word values and numbers can be unquoted: count:5 duration:60 id:abc123
-- CORRECT full examples:
-  * calendar:create title:"Team Meeting" start:"2025-10-17T16:30:00" duration:60
-  * mail:reply id:199e85d5b5b09017 body:"Thank you for your message. I will respond soon."
-  * mail:draft to:"me@gmail.com" subject:"Physical Activity" body:"Exercise is important for health."
-  * search:web query:"latest AI news" num_results:5
-  * search:deep query:"Ayodhya temple statistics" num_results:3
+
+⚠️⚠️⚠️ CRITICAL QUOTING RULES - MOST COMMON MISTAKE ⚠️⚠️⚠️
+YOU MUST WRAP ANY VALUE WITH SPACES IN DOUBLE QUOTES OR IT WILL FAIL!
+
+✅ ALWAYS QUOTE (will succeed):
+  • body:"I will reply to you soon"
+  • subject:"Meeting on Friday"
+  • title:"Project Update Meeting"
+  • query:"latest AI news"
+  • to:"user@example.com"
+
+❌ NEVER DO THIS (will fail with "Unexpected positional argument"):
+  • body:I will reply to you soon          ← WRONG! Breaks into multiple args
+  • subject:Meeting on Friday              ← WRONG! "on" and "Friday" seen as separate args
+  • title:Project Update Meeting           ← WRONG! "Update" and "Meeting" seen as separate args
+  • query:latest AI news                   ← WRONG! "AI" and "news" seen as separate args
+
+RULE: If the value has ANY spaces, quotes, punctuation, or special characters → MUST quote with "double quotes"
+Single-word values and numbers can be unquoted: count:5 duration:60 id:abc123
+
+CORRECT full examples:
+  • mail:reply id:last body:"Thank you for your email. I will get back to you soon."
+  • calendar:create title:"Team Meeting" start:"2025-10-17T16:30:00" duration:60
+  • mail:draft to:"user@example.com" subject:"Important Update" body:"Here is the latest information."
+  • search:web query:"latest AI news" num_results:5
+  • search:deep query:"Ayodhya temple statistics" num_results:3
 - FILE PATH RULES:
   * ALL generated files are automatically saved to ~/.clai/artifacts/ subdirectories
   * When referencing files created in previous steps, use JUST the filename (not full path)

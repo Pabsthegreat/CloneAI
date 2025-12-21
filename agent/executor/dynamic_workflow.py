@@ -4,11 +4,13 @@ Dynamic workflow generation pipeline orchestrating GPT-4.1 and local integration
 
 from __future__ import annotations
 
+import ast
 import importlib
+import importlib.util
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 from agent.config.runtime import REMOTE_GENERATOR_MAX_ATTEMPTS
 from agent.executor.gpt_workflow import (
@@ -23,6 +25,7 @@ from agent.workflows import (
     build_command_reference,
     load_generated_workflows,
     registry as workflow_registry,
+    WorkflowValidationError,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -116,12 +119,49 @@ def _ensure_directory(path: Path) -> None:
 
 
 def _validate_module_code(module_code: str, module_path: Path) -> Optional[str]:
+    """Validate generated code for syntax errors and missing imports."""
+    # Check syntax
     try:
-        compile(module_code, str(module_path), "exec")
+        tree = ast.parse(module_code, str(module_path))
     except SyntaxError as exc:
         return f"Syntax error: {exc}"
     except Exception as exc:  # pragma: no cover - defensive
+        return f"Parse error: {exc}"
+    
+    # Extract all imports
+    imports: Set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imports.add(alias.name.split('.')[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imports.add(node.module.split('.')[0])
+    
+    # Check if imports are available
+    missing_imports = []
+    for module_name in imports:
+        # Skip relative imports and built-in modules
+        if module_name in ('agent', '__future__'):
+            continue
+        
+        try:
+            importlib.import_module(module_name)
+        except ImportError:
+            # Check if it's a standard library module
+            spec = importlib.util.find_spec(module_name)
+            if spec is None:
+                missing_imports.append(module_name)
+    
+    if missing_imports:
+        return f"Missing required imports: {', '.join(missing_imports)}. These modules are not installed in the system."
+    
+    # Try to compile
+    try:
+        compile(module_code, str(module_path), "exec")
+    except Exception as exc:  # pragma: no cover - defensive
         return f"Compile error: {exc}"
+    
     return None
 
 
@@ -241,18 +281,39 @@ class WorkflowGenerationManager:
                 # Refresh is best-effort; proceed even if it fails
                 pass
 
+            # Try to execute the workflow to validate it works
+            # If it fails due to missing required parameters, still consider generation successful
             extras_dict = extras if extras is not None else {}
+            execution_output = None
+            execution_error = None
+            
             try:
                 exec_result = workflow_registry.execute(command, extras=extras_dict)
-            except Exception as exc:  # pragma: no cover - runtime errors bubble for retry
+                execution_output = exec_result.output
+                if not isinstance(execution_output, str):
+                    execution_output = str(execution_output)
+            except WorkflowValidationError as exc:
+                # Missing required parameters is OK - workflow code is valid
+                # Just means we can't test execute it without real data
+                if "required parameter" in str(exc).lower():
+                    execution_error = "⚠️ Workflow requires parameters - skipping execution test"
+                    execution_output = "Workflow generated successfully (requires parameters for execution)"
+                else:
+                    # Other validation errors should trigger retry
+                    previous_errors.append(f"Validation error: {exc}")
+                    continue
+            except Exception as exc:
+                # Other runtime errors might indicate code issues - trigger retry
                 previous_errors.append(f"Execution after generation failed: {exc}")
                 continue
 
-            output = exec_result.output
+            output = execution_output or "Workflow generated successfully"
             if not isinstance(output, str):
                 output = str(output)
 
             suffix = "\n\n🤖 Workflow generated automatically via GPT-4.1 integration."
+            if execution_error:
+                suffix = f"\n\n{execution_error}\n{suffix}"
             final_output = output + suffix
             
             print(f"\n{'='*60}")
@@ -262,20 +323,24 @@ class WorkflowGenerationManager:
             print(f"Total Attempts: {attempt_count}")
             print(f"Module: {namespace}_{action}.py")
             print(f"Summary: {result.summary}")
+            if execution_error:
+                print(f"Execution: {execution_error}")
             if result.notes:
                 print(f"\nNotes:")
                 for note in result.notes:
                     print(f"  • {note}")
             print(f"{'='*60}\n")
             
+            # For workflows that require parameters, we might not have exec_result
+            # Use namespace/action from recipe instead
             return GenerationOutcome(
                 success=True,
                 output=final_output,
                 notes=result.notes,
                 summary=result.summary,
-                spec_namespace=exec_result.spec.namespace,
-                spec_name=exec_result.spec.name,
-                arguments=exec_result.arguments,
+                spec_namespace=namespace,
+                spec_name=action,
+                arguments={},
             )
 
         print(f"\n{'='*60}")

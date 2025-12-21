@@ -189,7 +189,7 @@ function createWindow() {
     if (isDev) {
         // Development: Load from local file
         mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-        mainWindow.webContents.openDevTools();
+        // Dev tools can be opened manually with Cmd+Option+I (macOS) or Ctrl+Shift+I (Windows/Linux)
     } else {
         // Production: Load from file
         mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));

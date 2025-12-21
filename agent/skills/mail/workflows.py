@@ -357,11 +357,16 @@ def mail_reply_handler(ctx: WorkflowContext, params: Dict[str, Any]) -> str:
     message_id = params.get("id")
     body = params.get("body")
     
-    if not message_id:
-        raise WorkflowValidationError("Message ID is required")
+    client = GmailClient()
+    
+    # Handle "last" or missing ID by fetching the most recent email
+    if not message_id or message_id.lower() == "last":
+        messages = client.list_messages(max_results=1)
+        if not messages:
+            return "❌ No emails found to reply to."
+        message_id = messages[0]['id']
     
     # Get the original email
-    client = GmailClient()
     original_email = client.get_full_message(message_id)
     
     if not original_email:

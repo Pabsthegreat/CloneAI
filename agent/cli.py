@@ -1312,5 +1312,86 @@ def convert(
         typer.echo("")
         typer.secho(f"❌ Conversion error: {str(e)}", fg=typer.colors.RED)
 
+@app.command()
+def generate(
+    command: str = typer.Argument(..., help="Command to generate (e.g., 'mail:reply', 'task:new')")
+):
+    """
+    Force GPT to generate a new workflow for a command.
+    
+    This bypasses the normal workflow registry and forces GPT-4 to generate
+    a new workflow implementation for the specified command.
+    
+    Examples:
+        clai generate mail:reply
+        clai generate calendar:update
+        clai generate task:archive
+    """
+    from agent.executor.dynamic_workflow import dynamic_manager
+    
+    typer.echo("")
+    typer.secho(f"🔄 Generating workflow: {command}", fg=typer.colors.CYAN, bold=True)
+    typer.echo("")
+    
+    if ":" not in command:
+        typer.secho("❌ Invalid command format. Use 'namespace:action' (e.g., 'mail:reply')", fg=typer.colors.RED)
+        return
+    
+    if not dynamic_manager.can_attempt(command):
+        typer.secho("❌ Cannot generate workflow:", fg=typer.colors.RED)
+        typer.echo("  - GPT integration may not be configured")
+        typer.echo("  - Or generation quota reached for this command")
+        return
+    
+    typer.secho("⚙️  Calling GPT-4 to generate workflow...", fg=typer.colors.YELLOW)
+    typer.echo("")
+    
+    try:
+        result = dynamic_manager.ensure_workflow(
+            command,
+            user_context=f"Generate a complete implementation for {command}"
+        )
+        
+        if result.success:
+            typer.echo("")
+            typer.secho("✅ Workflow generated successfully!", fg=typer.colors.GREEN)
+            typer.echo(f"Command: {command}")
+            if result.summary:
+                typer.echo(f"Summary: {result.summary}")
+            if result.notes:
+                typer.echo("\nNotes:")
+                for note in result.notes:
+                    typer.echo(f"  • {note}")
+            
+            # Try to execute it
+            typer.echo("")
+            typer.secho("🧪 Testing generated workflow...", fg=typer.colors.CYAN)
+            if result.output:
+                typer.echo(result.output)
+            
+            log_command(
+                command=f"generate {command}",
+                output=f"Generated workflow: {command}",
+                command_type="generate",
+                metadata={"command": command, "success": True}
+            )
+        else:
+            typer.echo("")
+            typer.secho("❌ Workflow generation failed:", fg=typer.colors.RED)
+            if result.errors:
+                for error in result.errors:
+                    typer.echo(f"  • {error}")
+            
+            log_command(
+                command=f"generate {command}",
+                output="Generation failed",
+                command_type="generate",
+                metadata={"command": command, "success": False, "errors": result.errors}
+            )
+    
+    except Exception as e:
+        typer.echo("")
+        typer.secho(f"❌ Generation error: {str(e)}", fg=typer.colors.RED)
+
 if __name__ == "__main__":
     app()

@@ -683,12 +683,135 @@ async def chat_stream(req: ChatRequest):
             
             # Single step execution (fallback)
             else:
-                # For now, just return the reasoning if no plan
+                # Treat as a single-step workflow
+                step_instruction = req.message
                 yield json.dumps({
-                    "type": "result",
-                    "output": classification.reasoning,
-                    "duration": (datetime.now() - start_time).total_seconds()
+                    "type": "step_start",
+                    "step": 1,
+                    "total": 1,
+                    "description": step_instruction
                 }) + "\n"
+                
+                try:
+                    # Initialize memory for single step
+                    memory = WorkflowMemory(
+                        original_request=req.message,
+                        steps_plan=[step_instruction],
+                        categories=classification.categories
+                    )
+                    
+                    execution_plan = await run_in_threadpool(
+                        plan_step_execution,
+                        current_step_instruction=step_instruction,
+                        memory=memory,
+                        categories=classification.categories
+                    )
+                    
+                    if execution_plan.local_answer:
+                        yield json.dumps({
+                            "type": "result",
+                            "output": execution_plan.local_answer,
+                            "duration": (datetime.now() - start_time).total_seconds()
+                        }) + "\n"
+                        return
+
+                    # Handle workflow generation
+                    if execution_plan.needs_new_workflow:
+                        yield json.dumps({
+                            "type": "status",
+                            "message": "Generating new workflow with GPT..."
+                        }) + "\n"
+                        
+                        try:
+                            from agent.executor.dynamic_workflow import dynamic_manager
+                            
+                            workflow_request = execution_plan.workflow_request or {}
+                            command_key = f"{workflow_request.get('namespace', 'unknown')}:{workflow_request.get('action', 'custom')}"
+                            user_context = execution_plan.gpt_prompt or execution_plan.reasoning
+                            
+                            result = await run_in_threadpool(
+                                dynamic_manager.ensure_workflow,
+                                command_key,
+                                extras=None,
+                                user_context=user_context
+                            )
+                            
+                            if result.success:
+                                yield json.dumps({
+                                    "type": "status",
+                                    "message": f"✅ Generated workflow: {command_key}"
+                                }) + "\n"
+                                
+                                # The workflow was already executed by ensure_workflow
+                                step_output = result.output
+                                
+                                yield json.dumps({
+                                    "type": "step_complete",
+                                    "step": 1,
+                                    "status": "success",
+                                    "command": command_key,
+                                    "output": str(step_output)
+                                }) + "\n"
+                                
+                                yield json.dumps({
+                                    "type": "result",
+                                    "output": str(step_output),
+                                    "duration": (datetime.now() - start_time).total_seconds()
+                                }) + "\n"
+                                return
+                            else:
+                                error_msg = "; ".join(result.errors) if result.errors else "Unknown error"
+                                yield json.dumps({
+                                    "type": "result",
+                                    "output": f"Failed to generate workflow: {error_msg}",
+                                    "duration": (datetime.now() - start_time).total_seconds()
+                                }) + "\n"
+                                return
+                        except Exception as gen_error:
+                            logger.error(f"Workflow generation failed: {gen_error}")
+                            yield json.dumps({
+                                "type": "result",
+                                "output": f"Workflow generation failed: {str(gen_error)}",
+                                "duration": (datetime.now() - start_time).total_seconds()
+                            }) + "\n"
+                            return
+
+                    if not execution_plan.can_execute or not execution_plan.command:
+                        yield json.dumps({
+                            "type": "result",
+                            "output": f"Could not execute: {execution_plan.reasoning}",
+                            "duration": (datetime.now() - start_time).total_seconds()
+                        }) + "\n"
+                        return
+                        
+                    command_to_run = execution_plan.command
+                    
+                    # Execute command
+                    step_output = await run_in_threadpool(execute_single_command, command_to_run)
+                    
+                    yield json.dumps({
+                        "type": "step_complete",
+                        "step": 1,
+                        "status": "success",
+                        "command": command_to_run,
+                        "output": str(step_output)
+                    }) + "\n"
+                    
+                    yield json.dumps({
+                        "type": "result",
+                        "output": str(step_output),
+                        "duration": (datetime.now() - start_time).total_seconds()
+                    }) + "\n"
+                    
+                except Exception as e:
+                    logger.error(f"Single step execution failed: {e}")
+                    yield json.dumps({
+                        "type": "step_complete",
+                        "step": 1,
+                        "status": "failed",
+                        "error": str(e)
+                    }) + "\n"
+                    yield json.dumps({"type": "error", "message": str(e)}) + "\n"
 
         except Exception as e:
             logger.error(f"Stream failed: {e}")

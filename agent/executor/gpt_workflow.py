@@ -245,15 +245,44 @@ class GPTWorkflowGenerator:
         tool_imports = """
 IMPORTANT - Correct import paths for common tools:
   - Web search: from agent.tools.web_search import search_web_formatted, WebSearchTool
-  - Email: from agent.tools.mail import GmailClient, get_email_messages, create_draft_email
-  - Calendar: from agent.tools.calendar import CalendarClient, create_calendar_event
   - Documents: from agent.tools.documents import DocumentManager
-  - LLM/AI: from agent.tools.ollama_client import run_ollama
+  - LLM/AI: from agent.core.llm.ollama import run_ollama
   - NL Parser: from agent.tools.nl_parser import parse_natural_language, call_ollama
   - Image Generation: from agent.tools.image_generation import generate_image
   - Do not create workflows specific a single file. 
 
+⚠️  CRITICAL - ALWAYS INCLUDE ALL NECESSARY IMPORTS:
+  - Standard library: json, os, pathlib, datetime, typing, subprocess, shutil, etc.
+  - Third-party: requests, PIL (from Pillow), etc. (ONLY if installed)
+  - DO NOT assume imports - explicitly add them at the top of the file
+  - Common mistake: Using json.dumps() without 'import json'
+  - Common mistake: Using Path() without 'from pathlib import Path'
+  - Common mistake: Using datetime without 'from datetime import datetime'
+
+⚠️  GMAIL & CALENDAR CREDENTIALS ACCESS:
+For Gmail workflows (mail:*):
+  - Import: from agent.skills.mail.client import GmailClient
+  - Usage: client = GmailClient()  # Automatically handles OAuth tokens
+  - Token location: ~/.cloneai/tokens/gmail_token.json
+  - Scopes: gmail.readonly, gmail.compose, gmail.send, gmail.modify
+  - Methods available:
+    * client.list_messages(max_results=10, query="") → List[Dict] with id, from, subject, date, body
+    * client.get_full_message(message_id) → Dict with full email details
+    * client.send_message(to, subject, body, cc=None, bcc=None, attachments=None)
+    * client.create_draft(to, subject, body, cc=None, bcc=None)
+    * client.reply_to_message(message_id, body)
+  - IMPORTANT: list_messages returns Dict with keys: id, from, subject, date, snippet, body
+  - ALWAYS check if list returns empty before accessing [0]
+
+For Calendar workflows (calendar:*):
+  - Import: from agent.tools.calendar import CalendarClient
+  - Usage: client = CalendarClient()  # Automatically handles OAuth tokens
+  - Token location: ~/.cloneai/tokens/calendar_token.json
+  - Scopes: calendar, calendar.events
+  - Methods: create_event, list_events, delete_event, update_event
+
 ⚠️  NOTE: There is NO 'agent.tools.search' module - use 'agent.tools.web_search' instead!
+⚠️  NOTE: There is NO 'agent.tools.mail' module - use 'agent.skills.mail.client' instead!
 
 ⚠️  LLM USAGE - run_ollama() function:
   - Correct: run_ollama(prompt, profile=LOCAL_PLANNER) or run_ollama(prompt, profile=LOCAL_COMMAND_CLASSIFIER)
@@ -318,6 +347,8 @@ Output JSON (required):
 }}
 
 Requirements:
+- ⚠️  CRITICAL: Include ALL necessary imports at the top (json, os, pathlib, datetime, typing, etc.)
+- ⚠️  DOUBLE-CHECK: Every function/class used must have a corresponding import statement
 - Use @register_workflow decorator directly on handler function
 - Handler signature: def {namespace}_{recipe.name}_handler(ctx: WorkflowContext, params: Dict[str, Any]) -> str
 - Include metadata with "usage" field showing command syntax
@@ -328,6 +359,8 @@ Requirements:
 - DO NOT generate tests
 - ⚠️  VERIFY all imports exist! Check the "Available tools" section for correct module paths
 - Common mistake: using 'agent.tools.search' (WRONG) instead of 'agent.tools.web_search' (CORRECT)
+- Common mistake: Using json.dumps() without 'import json' at the top
+- Common mistake: Using Path() without 'from pathlib import Path'
 - ⚠️  FILE PATH HANDLING: When working with files (reading/writing/modifying):
   * CloneAI saves created files in 'artifacts/' folder by default
   * If file path is just a filename (e.g., "file.pptx"), check both current directory AND artifacts/ folder

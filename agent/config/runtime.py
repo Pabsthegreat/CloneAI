@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Dict, Iterable, Sequence, Tuple
+from typing import Dict, Iterable, Sequence, Tuple, Any
 
 
 def _get_env(name: str, default: str) -> str:
@@ -45,8 +45,9 @@ class LLMProfile:
     num_ctx: int = 4096  # Context window size - smaller = faster prefill
     num_gpu: int = 99  # Layers to offload to GPU (99 = all)
     num_batch: int = 512  # Batch size for prompt processing
+    f16_kv: bool = True  # Use FP16 for KV cache (memory optimization)
 
-    def to_ollama_options(self) -> Dict[str, float]:
+    def to_ollama_options(self) -> Dict[str, Any]:
         """Return deterministic Ollama generation settings."""
         return {
             "temperature": self.temperature,
@@ -57,6 +58,7 @@ class LLMProfile:
             "num_ctx": self.num_ctx,
             "num_gpu": self.num_gpu,
             "num_batch": self.num_batch,
+            "f16_kv": self.f16_kv,
         }
 
 

@@ -144,6 +144,10 @@ async function waitForBackend() {
     console.log('[App] Waiting for backend...');
     updateBackendStatus('connecting', 'Connecting...');
     
+    const loadingScreen = document.getElementById('loading-screen');
+    const appContainer = document.querySelector('.app-container');
+    const loadingText = document.querySelector('.loading-text');
+    
     let attempts = 0;
     const maxAttempts = 30;
     
@@ -155,10 +159,23 @@ async function waitForBackend() {
                 console.log('[App] Backend health check:', data);
                 isBackendReady = true;
                 updateBackendStatus('connected', 'Connected');
+                
+                // Hide loading screen and show app
+                if (loadingScreen) {
+                    loadingScreen.style.opacity = '0';
+                    setTimeout(() => {
+                        loadingScreen.style.display = 'none';
+                        appContainer.style.display = 'flex';
+                        setTimeout(() => appContainer.style.opacity = '1', 10);
+                    }, 500);
+                }
                 return true;
             }
         } catch (error) {
             // Backend not ready yet
+            if (loadingText) {
+                loadingText.textContent = `Connecting... (${attempts + 1}/${maxAttempts})`;
+            }
         }
         
         attempts++;
@@ -167,7 +184,10 @@ async function waitForBackend() {
         } else {
             console.error('[App] Backend failed to start');
             updateBackendStatus('error', 'Connection Failed');
-            addChatMessage('error', 'Failed to connect to backend. Please restart the app.');
+            if (loadingText) {
+                loadingText.textContent = 'Connection failed. Please restart the app.';
+                loadingText.style.color = '#ff6b6b';
+            }
         }
         return false;
     };
